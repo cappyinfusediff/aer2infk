@@ -38,6 +38,9 @@ jiffies = jiffies_64 + 4;
 #endif
 SECTIONS
 {
+	. = 0;
+	reloc_start = .;
+
 	. = KERNELBASE;
 
 /*
@@ -157,7 +160,7 @@ SECTIONS
 		INIT_RAM_FS
 	}
 
-	PERCPU_SECTION(L1_CACHE_BYTES)
+	PERCPU(PAGE_SIZE)
 
 	. = ALIGN(8);
 	.machine.desc : AT(ADDR(.machine.desc) - LOAD_OFFSET) {

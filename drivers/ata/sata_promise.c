@@ -134,7 +134,9 @@ enum {
 	PDC_IRQ_DISABLE		= (1 << 10),
 	PDC_RESET		= (1 << 11), /* HDMA reset */
 
-	PDC_COMMON_FLAGS	= ATA_FLAG_PIO_POLLING,
+	PDC_COMMON_FLAGS	= ATA_FLAG_NO_LEGACY |
+				  ATA_FLAG_MMIO |
+				  ATA_FLAG_PIO_POLLING,
 
 	/* ap->flags bits */
 	PDC_FLAG_GEN_II		= (1 << 24),
@@ -145,10 +147,6 @@ enum {
 struct pdc_port_priv {
 	u8			*pkt;
 	dma_addr_t		pkt_dma;
-};
-
-struct pdc_host_priv {
-	spinlock_t hard_reset_lock;
 };
 
 static int pdc_sata_scr_read(struct ata_link *link, unsigned int sc_reg, u32 *val);
@@ -805,10 +803,9 @@ static void pdc_hard_reset_port(struct ata_port *ap)
 	void __iomem *host_mmio = ap->host->iomap[PDC_MMIO_BAR];
 	void __iomem *pcictl_b1_mmio = host_mmio + PDC_PCI_CTL + 1;
 	unsigned int ata_no = pdc_ata_port_to_ata_no(ap);
-	struct pdc_host_priv *hpriv = ap->host->private_data;
 	u8 tmp;
 
-	spin_lock(&hpriv->hard_reset_lock);
+	spin_lock(&ap->host->lock);
 
 	tmp = readb(pcictl_b1_mmio);
 	tmp &= ~(0x10 << ata_no);
@@ -819,7 +816,7 @@ static void pdc_hard_reset_port(struct ata_port *ap)
 	writeb(tmp, pcictl_b1_mmio);
 	readb(pcictl_b1_mmio); /* flush */
 
-	spin_unlock(&hpriv->hard_reset_lock);
+	spin_unlock(&ap->host->lock);
 }
 
 static int pdc_sata_hardreset(struct ata_link *link, unsigned int *class,
@@ -1188,7 +1185,6 @@ static int pdc_ata_init_one(struct pci_dev *pdev,
 	const struct ata_port_info *pi = &pdc_port_info[ent->driver_data];
 	const struct ata_port_info *ppi[PDC_MAX_PORTS];
 	struct ata_host *host;
-	struct pdc_host_priv *hpriv;
 	void __iomem *host_mmio;
 	int n_ports, i, rc;
 	int is_sataii_tx4;
@@ -1226,11 +1222,6 @@ static int pdc_ata_init_one(struct pci_dev *pdev,
 		dev_printk(KERN_ERR, &pdev->dev, "failed to allocate host\n");
 		return -ENOMEM;
 	}
-	hpriv = devm_kzalloc(&pdev->dev, sizeof *hpriv, GFP_KERNEL);
-	if (!hpriv)
-		return -ENOMEM;
-	spin_lock_init(&hpriv->hard_reset_lock);
-	host->private_data = hpriv;
 	host->iomap = pcim_iomap_table(pdev);
 
 	is_sataii_tx4 = pdc_is_sataii_tx4(pi->flags);

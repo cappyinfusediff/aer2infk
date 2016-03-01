@@ -97,7 +97,7 @@ static struct notifier_block __refdata oprofile_cpu_notifier = {
 	.notifier_call = oprofile_cpu_notify,
 };
 
-int oprofile_timer_init(struct oprofile_operations *ops)
+int __init oprofile_timer_init(struct oprofile_operations *ops)
 {
 	int rc;
 
@@ -110,11 +110,10 @@ int oprofile_timer_init(struct oprofile_operations *ops)
 	ops->start = oprofile_hrtimer_start;
 	ops->stop = oprofile_hrtimer_stop;
 	ops->cpu_type = "timer";
-	printk(KERN_INFO "oprofile: using timer interrupt.\n");
 	return 0;
 }
 
-void oprofile_timer_exit(void)
+void __exit oprofile_timer_exit(void)
 {
 	unregister_hotcpu_notifier(&oprofile_cpu_notifier);
 }

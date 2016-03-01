@@ -47,7 +47,10 @@ static inline unsigned long size_inside_page(unsigned long start,
 #ifndef ARCH_HAS_VALID_PHYS_ADDR_RANGE
 static inline int valid_phys_addr_range(unsigned long addr, size_t count)
 {
-	return addr + count <= __pa(high_memory);
+	if (addr + count > __pa(high_memory))
+		return 0;
+
+	return 1;
 }
 
 static inline int valid_mmap_phys_addr_range(unsigned long pfn, size_t size)
@@ -817,46 +820,42 @@ static const struct file_operations full_fops = {
 static const struct file_operations oldmem_fops = {
 	.read	= read_oldmem,
 	.open	= open_oldmem,
-	.llseek = default_llseek,
 };
 #endif
 
-static ssize_t kmsg_writev(struct kiocb *iocb, const struct iovec *iv,
-			   unsigned long count, loff_t pos)
+#ifdef CONFIG_S3C_MEM
+extern int s3c_mem_mmap(struct file* filp, struct vm_area_struct *vma);
+extern int s3c_mem_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg);
+
+static const struct file_operations s3c_mem_fops = {
+	.ioctl	= s3c_mem_ioctl,
+	.mmap	= s3c_mem_mmap,
+};
+#endif
+
+static ssize_t kmsg_write(struct file *file, const char __user *buf,
+			  size_t count, loff_t *ppos)
 {
-	char *line, *p;
-	int i;
-	ssize_t ret = -EFAULT;
-	size_t len = iov_length(iv, count);
+	char *tmp;
+	ssize_t ret;
 
-	line = kmalloc(len + 1, GFP_KERNEL);
-	if (line == NULL)
+	tmp = kmalloc(count + 1, GFP_KERNEL);
+	if (tmp == NULL)
 		return -ENOMEM;
-
-	/*
-	 * copy all vectors into a single string, to ensure we do
-	 * not interleave our log line with other printk calls
-	 */
-	p = line;
-	for (i = 0; i < count; i++) {
-		if (copy_from_user(p, iv[i].iov_base, iv[i].iov_len))
-			goto out;
-		p += iv[i].iov_len;
+	ret = -EFAULT;
+	if (!copy_from_user(tmp, buf, count)) {
+		tmp[count] = 0;
+		ret = printk("%s", tmp);
+		if (ret > count)
+			/* printk can add a prefix */
+			ret = count;
 	}
-	p[0] = '\0';
-
-	ret = printk("%s", line);
-	/* printk can add a prefix */
-	if (ret > len)
-		ret = len;
-out:
-	kfree(line);
+	kfree(tmp);
 	return ret;
 }
 
 static const struct file_operations kmsg_fops = {
-	.aio_write = kmsg_writev,
-	.llseek = noop_llseek,
+	.write = kmsg_write,
 };
 
 static const struct memdev {
@@ -883,6 +882,9 @@ static const struct memdev {
 #ifdef CONFIG_CRASH_DUMP
 	[12] = { "oldmem", 0, &oldmem_fops, NULL },
 #endif
+#ifdef CONFIG_S3C_MEM
+	[13] = {"s3c-mem", S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH, &s3c_mem_fops},
+#endif
 };
 
 static int memory_open(struct inode *inode, struct file *filp)
@@ -902,10 +904,6 @@ static int memory_open(struct inode *inode, struct file *filp)
 	if (dev->dev_info)
 		filp->f_mapping->backing_dev_info = dev->dev_info;
 
-	/* Is /dev/mem or /dev/kmem ? */
-	if (dev->dev_info == &directly_mappable_cdev_bdi)
-		filp->f_mode |= FMODE_UNSIGNED_OFFSET;
-
 	if (dev->fops->open)
 		return dev->fops->open(inode, filp);
 
@@ -914,7 +912,6 @@ static int memory_open(struct inode *inode, struct file *filp)
 
 static const struct file_operations memory_fops = {
 	.open = memory_open,
-	.llseek = noop_llseek,
 };
 
 static char *mem_devnode(struct device *dev, mode_t *mode)

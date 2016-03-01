@@ -281,9 +281,9 @@ static void pl330_free_chan_resources(struct dma_chan *chan)
 	struct dma_pl330_chan *pch = to_pchan(chan);
 	unsigned long flags;
 
-	tasklet_kill(&pch->task);
-
 	spin_lock_irqsave(&pch->lock, flags);
+
+	tasklet_kill(&pch->task);
 
 	pl330_release_channel(pch->pl330_chid);
 	pch->pl330_chid = NULL;
@@ -657,7 +657,7 @@ static irqreturn_t pl330_irq_handler(int irq, void *data)
 }
 
 static int __devinit
-pl330_probe(struct amba_device *adev, const struct amba_id *id)
+pl330_probe(struct amba_device *adev, struct amba_id *id)
 {
 	struct dma_pl330_platdata *pdat;
 	struct dma_pl330_dmac *pdmac;

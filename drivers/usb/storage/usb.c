@@ -120,17 +120,6 @@ MODULE_PARM_DESC(quirks, "supplemental list of device IDs and their quirks");
 	.useTransport = use_transport,	\
 }
 
-#define UNUSUAL_VENDOR_INTF(idVendor, cl, sc, pr, \
-		vendor_name, product_name, use_protocol, use_transport, \
-		init_function, Flags) \
-{ \
-	.vendorName = vendor_name,	\
-	.productName = product_name,	\
-	.useProtocol = use_protocol,	\
-	.useTransport = use_transport,	\
-	.initFunction = init_function,	\
-}
-
 static struct us_unusual_dev us_unusual_dev_list[] = {
 #	include "unusual_devs.h" 
 	{ }		/* Terminating entry */
@@ -139,7 +128,6 @@ static struct us_unusual_dev us_unusual_dev_list[] = {
 #undef UNUSUAL_DEV
 #undef COMPLIANT_DEV
 #undef USUAL_DEV
-#undef UNUSUAL_VENDOR_INTF
 
 
 #ifdef CONFIG_PM	/* Minimal support for suspend and resume */
@@ -348,7 +336,6 @@ static int usb_stor_control_thread(void * __us)
 		else {
 			US_DEBUG(usb_stor_show_command(us->srb));
 			us->proto_handler(us->srb, us);
-			usb_mark_last_busy(us->pusb_dev);
 		}
 
 		/* lock access to the state */
@@ -451,9 +438,7 @@ static void adjust_quirks(struct us_data *us)
 			US_FL_CAPACITY_HEURISTICS | US_FL_IGNORE_DEVICE |
 			US_FL_NOT_LOCKABLE | US_FL_MAX_SECTORS_64 |
 			US_FL_CAPACITY_OK | US_FL_IGNORE_RESIDUE |
-			US_FL_SINGLE_LUN | US_FL_NO_WP_DETECT |
-			US_FL_NO_READ_DISC_INFO | US_FL_NO_READ_CAPACITY_16 |
-			US_FL_INITIAL_READ10);
+			US_FL_SINGLE_LUN | US_FL_NO_WP_DETECT);
 
 	p = quirks;
 	while (*p) {
@@ -485,12 +470,6 @@ static void adjust_quirks(struct us_data *us)
 		case 'c':
 			f |= US_FL_FIX_CAPACITY;
 			break;
-		case 'd':
-			f |= US_FL_NO_READ_DISC_INFO;
-			break;
-		case 'e':
-			f |= US_FL_NO_READ_CAPACITY_16;
-			break;
 		case 'h':
 			f |= US_FL_CAPACITY_HEURISTICS;
 			break;
@@ -502,9 +481,6 @@ static void adjust_quirks(struct us_data *us)
 			break;
 		case 'm':
 			f |= US_FL_MAX_SECTORS_64;
-			break;
-		case 'n':
-			f |= US_FL_INITIAL_READ10;
 			break;
 		case 'o':
 			f |= US_FL_CAPACITY_OK;
@@ -535,10 +511,10 @@ static int get_device_info(struct us_data *us, const struct usb_device_id *id,
 
 	/* Store the entries */
 	us->unusual_dev = unusual_dev;
-	us->subclass = (unusual_dev->useProtocol == USB_SC_DEVICE) ?
+	us->subclass = (unusual_dev->useProtocol == US_SC_DEVICE) ?
 			idesc->bInterfaceSubClass :
 			unusual_dev->useProtocol;
-	us->protocol = (unusual_dev->useTransport == USB_PR_DEVICE) ?
+	us->protocol = (unusual_dev->useTransport == US_PR_DEVICE) ?
 			idesc->bInterfaceProtocol :
 			unusual_dev->useTransport;
 	us->fflags = USB_US_ORIG_FLAGS(id->driver_info);
@@ -575,10 +551,10 @@ static int get_device_info(struct us_data *us, const struct usb_device_id *id,
 		struct usb_device_descriptor *ddesc = &dev->descriptor;
 		int msg = -1;
 
-		if (unusual_dev->useProtocol != USB_SC_DEVICE &&
+		if (unusual_dev->useProtocol != US_SC_DEVICE &&
 			us->subclass == idesc->bInterfaceSubClass)
 			msg += 1;
-		if (unusual_dev->useTransport != USB_PR_DEVICE &&
+		if (unusual_dev->useTransport != US_PR_DEVICE &&
 			us->protocol == idesc->bInterfaceProtocol)
 			msg += 2;
 		if (msg >= 0 && !(us->fflags & US_FL_NEED_OVERRIDE))
@@ -605,21 +581,21 @@ static int get_device_info(struct us_data *us, const struct usb_device_id *id,
 static void get_transport(struct us_data *us)
 {
 	switch (us->protocol) {
-	case USB_PR_CB:
+	case US_PR_CB:
 		us->transport_name = "Control/Bulk";
 		us->transport = usb_stor_CB_transport;
 		us->transport_reset = usb_stor_CB_reset;
 		us->max_lun = 7;
 		break;
 
-	case USB_PR_CBI:
+	case US_PR_CBI:
 		us->transport_name = "Control/Bulk/Interrupt";
 		us->transport = usb_stor_CB_transport;
 		us->transport_reset = usb_stor_CB_reset;
 		us->max_lun = 7;
 		break;
 
-	case USB_PR_BULK:
+	case US_PR_BULK:
 		us->transport_name = "Bulk";
 		us->transport = usb_stor_Bulk_transport;
 		us->transport_reset = usb_stor_Bulk_reset;
@@ -631,35 +607,35 @@ static void get_transport(struct us_data *us)
 static void get_protocol(struct us_data *us)
 {
 	switch (us->subclass) {
-	case USB_SC_RBC:
+	case US_SC_RBC:
 		us->protocol_name = "Reduced Block Commands (RBC)";
 		us->proto_handler = usb_stor_transparent_scsi_command;
 		break;
 
-	case USB_SC_8020:
+	case US_SC_8020:
 		us->protocol_name = "8020i";
 		us->proto_handler = usb_stor_pad12_command;
 		us->max_lun = 0;
 		break;
 
-	case USB_SC_QIC:
+	case US_SC_QIC:
 		us->protocol_name = "QIC-157";
 		us->proto_handler = usb_stor_pad12_command;
 		us->max_lun = 0;
 		break;
 
-	case USB_SC_8070:
+	case US_SC_8070:
 		us->protocol_name = "8070i";
 		us->proto_handler = usb_stor_pad12_command;
 		us->max_lun = 0;
 		break;
 
-	case USB_SC_SCSI:
+	case US_SC_SCSI:
 		us->protocol_name = "Transparent SCSI";
 		us->proto_handler = usb_stor_transparent_scsi_command;
 		break;
 
-	case USB_SC_UFI:
+	case US_SC_UFI:
 		us->protocol_name = "Uniform Floppy Interface (UFI)";
 		us->proto_handler = usb_stor_ufi_command;
 		break;
@@ -702,7 +678,7 @@ static int get_pipes(struct us_data *us)
 		}
 	}
 
-	if (!ep_in || !ep_out || (us->protocol == USB_PR_CBI && !ep_int)) {
+	if (!ep_in || !ep_out || (us->protocol == US_PR_CBI && !ep_int)) {
 		US_DEBUGP("Endpoint sanity check failed! Rejecting dev.\n");
 		return -EIO;
 	}
@@ -800,19 +776,15 @@ static void quiesce_and_remove_host(struct us_data *us)
 	struct Scsi_Host *host = us_to_host(us);
 
 	/* If the device is really gone, cut short reset delays */
-	if (us->pusb_dev->state == USB_STATE_NOTATTACHED) {
+	if (us->pusb_dev->state == USB_STATE_NOTATTACHED)
 		set_bit(US_FLIDX_DISCONNECTING, &us->dflags);
-		wake_up(&us->delay_wait);
-	}
 
-	/* Prevent SCSI scanning (if it hasn't started yet)
-	 * or wait for the SCSI-scanning routine to stop.
+	/* Prevent SCSI-scanning (if it hasn't started yet)
+	 * and wait for the SCSI-scanning thread to stop.
 	 */
-	cancel_delayed_work_sync(&us->scan_dwork);
-
-	/* Balance autopm calls if scanning was cancelled */
-	if (test_bit(US_FLIDX_SCAN_PENDING, &us->dflags))
-		usb_autopm_put_interface_no_suspend(us->pusb_intf);
+	set_bit(US_FLIDX_DONT_SCAN, &us->dflags);
+	wake_up(&us->delay_wait);
+	wait_for_completion(&us->scanning_done);
 
 	/* Removing the host will perform an orderly shutdown: caches
 	 * synchronized, disks spun down, etc.
@@ -839,28 +811,41 @@ static void release_everything(struct us_data *us)
 	scsi_host_put(us_to_host(us));
 }
 
-/* Delayed-work routine to carry out SCSI-device scanning */
-static void usb_stor_scan_dwork(struct work_struct *work)
+/* Thread to carry out delayed SCSI-device scanning */
+static int usb_stor_scan_thread(void * __us)
 {
-	struct us_data *us = container_of(work, struct us_data,
-			scan_dwork.work);
+	struct us_data *us = (struct us_data *)__us;
 	struct device *dev = &us->pusb_intf->dev;
 
-	dev_dbg(dev, "starting scan\n");
+	dev_dbg(dev, "device found\n");
 
-	/* For bulk-only devices, determine the max LUN value */
-	if (us->protocol == USB_PR_BULK && !(us->fflags & US_FL_SINGLE_LUN)) {
-		mutex_lock(&us->dev_mutex);
-		us->max_lun = usb_stor_Bulk_max_lun(us);
-		mutex_unlock(&us->dev_mutex);
+	set_freezable();
+	/* Wait for the timeout to expire or for a disconnect */
+	if (delay_use > 0) {
+		dev_dbg(dev, "waiting for device to settle "
+				"before scanning\n");
+		wait_event_freezable_timeout(us->delay_wait,
+				test_bit(US_FLIDX_DONT_SCAN, &us->dflags),
+				delay_use * HZ);
 	}
-	scsi_scan_host(us_to_host(us));
-	dev_dbg(dev, "scan complete\n");
 
-	/* Should we unbind if no devices were detected? */
+	/* If the device is still connected, perform the scanning */
+	if (!test_bit(US_FLIDX_DONT_SCAN, &us->dflags)) {
 
-	usb_autopm_put_interface(us->pusb_intf);
-	clear_bit(US_FLIDX_SCAN_PENDING, &us->dflags);
+		/* For bulk-only devices, determine the max LUN value */
+		if (us->protocol == US_PR_BULK &&
+				!(us->fflags & US_FL_SINGLE_LUN)) {
+			mutex_lock(&us->dev_mutex);
+			us->max_lun = usb_stor_Bulk_max_lun(us);
+			mutex_unlock(&us->dev_mutex);
+		}
+		scsi_scan_host(us_to_host(us));
+		dev_dbg(dev, "scan complete\n");
+
+		/* Should we unbind if no devices were detected? */
+	}
+
+	complete_and_exit(&us->scanning_done, 0);
 }
 
 static unsigned int usb_stor_sg_tablesize(struct usb_interface *intf)
@@ -907,7 +892,7 @@ int usb_stor_probe1(struct us_data **pus,
 	init_completion(&us->cmnd_ready);
 	init_completion(&(us->notify));
 	init_waitqueue_head(&us->delay_wait);
-	INIT_DELAYED_WORK(&us->scan_dwork, usb_stor_scan_dwork);
+	init_completion(&us->scanning_done);
 
 	/* Associate the us_data structure with the USB device */
 	result = associate_dev(us, intf);
@@ -938,6 +923,7 @@ EXPORT_SYMBOL_GPL(usb_stor_probe1);
 /* Second part of general USB mass-storage probing */
 int usb_stor_probe2(struct us_data *us)
 {
+	struct task_struct *th;
 	int result;
 	struct device *dev = &us->pusb_intf->dev;
 
@@ -958,13 +944,6 @@ int usb_stor_probe2(struct us_data *us)
 	if (result)
 		goto BadDevice;
 
-	/*
-	 * If the device returns invalid data for the first READ(10)
-	 * command, indicate the command should be retried.
-	 */
-	if (us->fflags & US_FL_INITIAL_READ10)
-		set_bit(US_FLIDX_REDO_READ10, &us->dflags);
-
 	/* Acquire all the other resources and add the host */
 	result = usb_stor_acquire_resources(us);
 	if (result)
@@ -978,14 +957,19 @@ int usb_stor_probe2(struct us_data *us)
 		goto BadDevice;
 	}
 
-	/* Submit the delayed_work for SCSI-device scanning */
-	usb_autopm_get_interface_no_resume(us->pusb_intf);
-	set_bit(US_FLIDX_SCAN_PENDING, &us->dflags);
+	/* Start up the thread for delayed SCSI-device scanning */
+	th = kthread_create(usb_stor_scan_thread, us, "usb-stor-scan");
+	if (IS_ERR(th)) {
+		dev_warn(dev,
+				"Unable to start the device-scanning thread\n");
+		complete(&us->scanning_done);
+		quiesce_and_remove_host(us);
+		result = PTR_ERR(th);
+		goto BadDevice;
+	}
 
-	if (delay_use > 0)
-		dev_dbg(dev, "waiting for device to settle before scanning\n");
-	queue_delayed_work(system_freezable_wq, &us->scan_dwork,
-			delay_use * HZ);
+	wake_up_process(th);
+
 	return 0;
 
 	/* We come here if there are any problems */
@@ -1056,9 +1040,7 @@ static struct usb_driver usb_storage_driver = {
 	.pre_reset =	usb_stor_pre_reset,
 	.post_reset =	usb_stor_post_reset,
 	.id_table =	usb_storage_usb_ids,
-	.supports_autosuspend = 1,
 	.soft_unbind =	1,
-	.no_dynamic_id = 1,
 };
 
 static int __init usb_stor_init(void)

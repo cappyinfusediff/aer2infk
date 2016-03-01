@@ -24,6 +24,7 @@
 #include <linux/module.h>
 
 #include <linux/i2c.h>
+#include <linux/i2c-id.h>
 #include <linux/init.h>
 #include <linux/time.h>
 #include <linux/interrupt.h>
@@ -201,29 +202,18 @@ static void s3c24xx_i2c_message_start(struct s3c24xx_i2c *i2c,
 
 static inline void s3c24xx_i2c_stop(struct s3c24xx_i2c *i2c, int ret)
 {
-	unsigned long iicstat;
-	unsigned long iiccon;
+	unsigned long iicstat = readl(i2c->regs + S3C2410_IICSTAT);
 
 	dev_dbg(i2c->dev, "STOP\n");
 
 	/* stop the transfer */
-
-	/* Disable irq */
-	s3c24xx_i2c_disable_irq(i2c);
-
-	/* STOP signal generation : MTx(0xD0) */
-	iicstat = readl(i2c->regs + S3C2410_IICSTAT);
 	iicstat &= ~S3C2410_IICSTAT_START;
 	writel(iicstat, i2c->regs + S3C2410_IICSTAT);
 
-	/* Clear pending bit */
-	iiccon = readl(i2c->regs + S3C2410_IICCON);
-	iiccon &= ~S3C2410_IICCON_IRQPEND;
-	writel(iiccon, i2c->regs + S3C2410_IICCON);
+	i2c->state = STATE_STOP;
 
 	s3c24xx_i2c_master_complete(i2c, ret);
-
-	i2c->state = STATE_STOP;
+	s3c24xx_i2c_disable_irq(i2c);
 }
 
 /* helper functions to determine the current state in the set of
@@ -275,6 +265,7 @@ static int i2c_s3c_irq_nextbyte(struct s3c24xx_i2c *i2c, unsigned long iicstat)
 	case STATE_IDLE:
 		dev_err(i2c->dev, "%s: called in STATE_IDLE\n", __func__);
 		goto out;
+		break;
 
 	case STATE_STOP:
 		dev_err(i2c->dev, "%s: called in STATE_STOP\n", __func__);
@@ -495,8 +486,7 @@ static int s3c24xx_i2c_set_master(struct s3c24xx_i2c *i2c)
 static int s3c24xx_i2c_doxfer(struct s3c24xx_i2c *i2c,
 			      struct i2c_msg *msgs, int num)
 {
-	unsigned long iicstat, timeout;
-	int spins = 20;
+	unsigned long timeout;
 	int ret;
 
 	if (i2c->suspended)
@@ -535,38 +525,7 @@ static int s3c24xx_i2c_doxfer(struct s3c24xx_i2c *i2c,
 
 	/* ensure the stop has been through the bus */
 
-	dev_dbg(i2c->dev, "waiting for bus idle\n");
-
-	/* first, try busy waiting briefly */
-	do {
-		cpu_relax();
-		iicstat = readl(i2c->regs + S3C2410_IICSTAT);
-	} while ((iicstat & S3C2410_IICSTAT_START) && --spins);
-
-	/* if that timed out sleep */
-	if (!spins) {
-		msleep(1);
-		iicstat = readl(i2c->regs + S3C2410_IICSTAT);
-	}
-
-	/* if still not finished, clean it up */
-	spin_lock_irq(&i2c->lock);
-
-	if (iicstat & S3C2410_IICSTAT_BUSBUSY) {
-		dev_dbg(i2c->dev, "timeout waiting for bus idle\n");
-
-		if (i2c->state != STATE_STOP) {
-			dev_dbg(i2c->dev,
-				"timeout : i2c interrupt hasn't occurred\n");
-			s3c24xx_i2c_stop(i2c, 0);
-		}
-
-		/* Disable Serial Out : To forcely terminate the connection */
-		iicstat = readl(i2c->regs + S3C2410_IICSTAT);
-		iicstat &= ~S3C2410_IICSTAT_TXRXEN;
-		writel(iicstat, i2c->regs + S3C2410_IICSTAT);
-	}
-	spin_unlock_irq(&i2c->lock);
+	udelay(10);
 
  out:
 	return ret;
@@ -591,18 +550,18 @@ static int s3c24xx_i2c_xfer(struct i2c_adapter *adap,
 
 		ret = s3c24xx_i2c_doxfer(i2c, msgs, num);
 
-		if (ret != -EAGAIN) {
-			clk_disable(i2c->clk);
-			return ret;
-		}
+		if (ret != -EAGAIN)
+			goto out;
 
 		dev_dbg(i2c->dev, "Retrying transmission (%d)\n", retry);
 
 		udelay(100);
 	}
-
+	ret = -EREMOTEIO;
+out:
 	clk_disable(i2c->clk);
-	return -EREMOTEIO;
+
+	return ret;
 }
 
 /* declare our i2c functionality */
@@ -936,8 +895,9 @@ static int s3c24xx_i2c_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, i2c);
 
-	dev_info(&pdev->dev, "%s: S3C I2C adapter\n", dev_name(&i2c->adap.dev));
 	clk_disable(i2c->clk);
+
+	dev_info(&pdev->dev, "%s: S3C I2C adapter\n", dev_name(&i2c->adap.dev));
 	return 0;
 
  err_cpufreq:
@@ -1005,6 +965,7 @@ static int s3c24xx_i2c_resume(struct device *dev)
 	struct s3c24xx_i2c *i2c = platform_get_drvdata(pdev);
 
 	i2c->suspended = 0;
+
 	clk_enable(i2c->clk);
 	s3c24xx_i2c_init(i2c);
 	clk_disable(i2c->clk);

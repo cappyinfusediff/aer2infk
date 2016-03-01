@@ -207,7 +207,7 @@ repeat_locked:
 	 * the committing transaction.  Really, we only need to give it
 	 * committing_transaction->t_outstanding_credits plus "enough" for
 	 * the log control blocks.
-	 * Also, this test is inconsistent with the matching one in
+	 * Also, this test is inconsitent with the matching one in
 	 * journal_extend().
 	 */
 	if (__log_space_left(journal) < jbd_space_needed(journal)) {
@@ -266,8 +266,7 @@ static handle_t *new_handle(int nblocks)
  * This function is visible to journal users (like ext3fs), so is not
  * called with the journal already locked.
  *
- * Return a pointer to a newly allocated handle, or an ERR_PTR() value
- * on failure.
+ * Return a pointer to a newly allocated handle, or NULL on failure
  */
 handle_t *journal_start(journal_t *journal, int nblocks)
 {
@@ -294,7 +293,9 @@ handle_t *journal_start(journal_t *journal, int nblocks)
 		jbd_free_handle(handle);
 		current->journal_info = NULL;
 		handle = ERR_PTR(err);
+		goto out;
 	}
+out:
 	return handle;
 }
 
@@ -527,7 +528,7 @@ do_get_write_access(handle_t *handle, struct journal_head *jh,
 	transaction = handle->h_transaction;
 	journal = transaction->t_journal;
 
-	jbd_debug(5, "journal_head %p, force_copy %d\n", jh, force_copy);
+	jbd_debug(5, "buffer_head %p, force_copy %d\n", jh, force_copy);
 
 	JBUFFER_TRACE(jh, "entry");
 repeat:
@@ -1393,7 +1394,7 @@ int journal_stop(handle_t *handle)
 	 * by 30x or more...
 	 *
 	 * We try and optimize the sleep time against what the underlying disk
-	 * can do, instead of having a static sleep time.  This is useful for
+	 * can do, instead of having a static sleep time.  This is usefull for
 	 * the case where our storage is so fast that it is more optimal to go
 	 * ahead and force a flush and wait for the transaction to be committed
 	 * than it is to wait for an arbitrary amount of time for new writers to
@@ -1837,16 +1838,15 @@ static int __dispose_buffer(struct journal_head *jh, transaction_t *transaction)
  * We're outside-transaction here.  Either or both of j_running_transaction
  * and j_committing_transaction may be NULL.
  */
-static int journal_unmap_buffer(journal_t *journal, struct buffer_head *bh,
-				int partial_page)
+static int journal_unmap_buffer(journal_t *journal, struct buffer_head *bh)
 {
 	transaction_t *transaction;
 	struct journal_head *jh;
 	int may_free = 1;
+	int ret;
 
 	BUFFER_TRACE(bh, "entry");
 
-retry:
 	/*
 	 * It is safe to proceed here without the j_list_lock because the
 	 * buffers cannot be stolen by try_to_free_buffers as long as we are
@@ -1874,18 +1874,10 @@ retry:
 	 * clear the buffer dirty bit at latest at the moment when the
 	 * transaction marking the buffer as freed in the filesystem
 	 * structures is committed because from that moment on the
-	 * block can be reallocated and used by a different page.
+	 * buffer can be reallocated and used by a different page.
 	 * Since the block hasn't been freed yet but the inode has
 	 * already been added to orphan list, it is safe for us to add
 	 * the buffer to BJ_Forget list of the newest transaction.
-	 *
-	 * Also we have to clear buffer_mapped flag of a truncated buffer
-	 * because the buffer_head may be attached to the page straddling
-	 * i_size (can happen only when blocksize < pagesize) and thus the
-	 * buffer_head can be reused when the file is extended again. So we end
-	 * up keeping around invalidated buffers attached to transactions'
-	 * BJ_Forget list just to stop checkpointing code from cleaning up
-	 * the transaction this buffer was modified in.
 	 */
 	transaction = jh->b_transaction;
 	if (transaction == NULL) {
@@ -1912,9 +1904,13 @@ retry:
 			 * committed, the buffer won't be needed any
 			 * longer. */
 			JBUFFER_TRACE(jh, "checkpointed: add to BJ_Forget");
-			may_free = __dispose_buffer(jh,
+			ret = __dispose_buffer(jh,
 					journal->j_running_transaction);
-			goto zap_buffer;
+			journal_put_journal_head(jh);
+			spin_unlock(&journal->j_list_lock);
+			jbd_unlock_bh_state(bh);
+			spin_unlock(&journal->j_state_lock);
+			return ret;
 		} else {
 			/* There is no currently-running transaction. So the
 			 * orphan record which we wrote for this file must have
@@ -1922,9 +1918,13 @@ retry:
 			 * the committing transaction, if it exists. */
 			if (journal->j_committing_transaction) {
 				JBUFFER_TRACE(jh, "give to committing trans");
-				may_free = __dispose_buffer(jh,
+				ret = __dispose_buffer(jh,
 					journal->j_committing_transaction);
-				goto zap_buffer;
+				journal_put_journal_head(jh);
+				spin_unlock(&journal->j_list_lock);
+				jbd_unlock_bh_state(bh);
+				spin_unlock(&journal->j_state_lock);
+				return ret;
 			} else {
 				/* The orphan record's transaction has
 				 * committed.  We can cleanse this buffer */
@@ -1945,26 +1945,10 @@ retry:
 		}
 		/*
 		 * The buffer is committing, we simply cannot touch
-		 * it. If the page is straddling i_size we have to wait
-		 * for commit and try again.
-		 */
-		if (partial_page) {
-			tid_t tid = journal->j_committing_transaction->t_tid;
-
-			journal_put_journal_head(jh);
-			spin_unlock(&journal->j_list_lock);
-			jbd_unlock_bh_state(bh);
-			spin_unlock(&journal->j_state_lock);
-			unlock_buffer(bh);
-			log_wait_commit(journal, tid);
-			lock_buffer(bh);
-			goto retry;
-		}
-		/*
-		 * OK, buffer won't be reachable after truncate. We just set
-		 * j_next_transaction to the running transaction (if there is
-		 * one) and mark buffer as freed so that commit code knows it
-		 * should clear dirty bits when it is done with the buffer.
+		 * it. So we just set j_next_transaction to the
+		 * running transaction (if there is one) and mark
+		 * buffer as freed so that commit code knows it should
+		 * clear dirty bits when it is done with the buffer.
 		 */
 		set_buffer_freed(bh);
 		if (journal->j_running_transaction && buffer_jbddirty(bh))
@@ -1987,14 +1971,6 @@ retry:
 	}
 
 zap_buffer:
-	/*
-	 * This is tricky. Although the buffer is truncated, it may be reused
-	 * if blocksize < pagesize and it is attached to the page straddling
-	 * EOF. Since the buffer might have been added to BJ_Forget list of the
-	 * running transaction, journal_get_write_access() won't clear
-	 * b_modified and credit accounting gets confused. So clear b_modified
-	 * here. */
-	jh->b_modified = 0;
 	journal_put_journal_head(jh);
 zap_buffer_no_jh:
 	spin_unlock(&journal->j_list_lock);
@@ -2043,8 +2019,7 @@ void journal_invalidatepage(journal_t *journal,
 		if (offset <= curr_off) {
 			/* This block is wholly outside the truncation point */
 			lock_buffer(bh);
-			may_free &= journal_unmap_buffer(journal, bh,
-							 offset > 0);
+			may_free &= journal_unmap_buffer(journal, bh);
 			unlock_buffer(bh);
 		}
 		curr_off = next_off;

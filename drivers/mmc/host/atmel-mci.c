@@ -127,7 +127,7 @@ struct atmel_mci_dma {
  * EVENT_DATA_COMPLETE is set in @pending_events, all data-related
  * interrupts must be disabled and @data_status updated with a
  * snapshot of SR. Similarly, before EVENT_CMD_COMPLETE is set, the
- * CMDRDY interrupt must be disabled and @cmd_status updated with a
+ * CMDRDY interupt must be disabled and @cmd_status updated with a
  * snapshot of SR, and before EVENT_XFER_COMPLETE can be set, the
  * bytes_xfered field of @data must be written. This is ensured by
  * using barriers.
@@ -468,14 +468,7 @@ err:
 static inline unsigned int ns_to_clocks(struct atmel_mci *host,
 					unsigned int ns)
 {
-	/*
-	 * It is easier here to use us instead of ns for the timeout,
-	 * it prevents from overflows during calculation.
-	 */
-	unsigned int us = DIV_ROUND_UP(ns, 1000);
-
-	/* Maximum clock frequency is host->bus_hz/2 */
-	return us * (DIV_ROUND_UP(host->bus_hz, 2000000));
+	return (ns * (host->bus_hz / 1000000) + 999) / 1000;
 }
 
 static void atmci_set_timeout(struct atmel_mci *host,
@@ -585,8 +578,7 @@ static void atmci_dma_cleanup(struct atmel_mci *host)
 	struct mmc_data			*data = host->data;
 
 	if (data)
-		dma_unmap_sg(host->dma.chan->device->dev,
-			     data->sg, data->sg_len,
+		dma_unmap_sg(&host->pdev->dev, data->sg, data->sg_len,
 			     ((data->flags & MMC_DATA_WRITE)
 			      ? DMA_TO_DEVICE : DMA_FROM_DEVICE));
 }
@@ -596,7 +588,7 @@ static void atmci_stop_dma(struct atmel_mci *host)
 	struct dma_chan *chan = host->data_chan;
 
 	if (chan) {
-		dmaengine_terminate_all(chan);
+	  chan->device->device_control(chan, DMA_TERMINATE_ALL, 0);
 		atmci_dma_cleanup(host);
 	} else {
 		/* Data transfer was stopped by the interrupt handler */
@@ -692,11 +684,11 @@ atmci_prepare_data_dma(struct atmel_mci *host, struct mmc_data *data)
 	else
 		direction = DMA_TO_DEVICE;
 
-	sglen = dma_map_sg(chan->device->dev, data->sg,
-			   data->sg_len, direction);
-
+	sglen = dma_map_sg(&host->pdev->dev, data->sg, data->sg_len, direction);
+	if (sglen != data->sg_len)
+		goto unmap_exit;
 	desc = chan->device->device_prep_slave_sg(chan,
-			data->sg, sglen, direction,
+			data->sg, data->sg_len, direction,
 			DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
 	if (!desc)
 		goto unmap_exit;
@@ -707,7 +699,7 @@ atmci_prepare_data_dma(struct atmel_mci *host, struct mmc_data *data)
 
 	return 0;
 unmap_exit:
-	dma_unmap_sg(chan->device->dev, data->sg, data->sg_len, direction);
+	dma_unmap_sg(&host->pdev->dev, data->sg, sglen, direction);
 	return -ENOMEM;
 }
 
@@ -717,8 +709,8 @@ static void atmci_submit_data(struct atmel_mci *host)
 	struct dma_async_tx_descriptor	*desc = host->dma.data_desc;
 
 	if (chan) {
-		dmaengine_submit(desc);
-		dma_async_issue_pending(chan);
+		desc->tx_submit(desc);
+		chan->device->device_issue_pending(chan);
 	}
 }
 
@@ -1089,7 +1081,7 @@ static void atmci_request_end(struct atmel_mci *host, struct mmc_request *mrq)
 	/*
 	 * Update the MMC clock rate if necessary. This may be
 	 * necessary if set_ios() is called when a different slot is
-	 * busy transferring data.
+	 * busy transfering data.
 	 */
 	if (host->need_clock_update) {
 		mci_writel(host, MR, host->mode_reg);
@@ -1632,7 +1624,8 @@ static int __init atmci_init_slot(struct atmel_mci *host,
 	if (slot_data->bus_width >= 4)
 		mmc->caps |= MMC_CAP_4_BIT_DATA;
 
-	mmc->max_segs = 64;
+	mmc->max_hw_segs = 64;
+	mmc->max_phys_segs = 64;
 	mmc->max_req_size = 32768 * 512;
 	mmc->max_blk_size = 32768;
 	mmc->max_blk_count = 512;
@@ -1790,7 +1783,7 @@ static int __init atmci_probe(struct platform_device *pdev)
 	}
 
 	ret = -ENOMEM;
-	host->regs = ioremap(regs->start, resource_size(regs));
+	host->regs = ioremap(regs->start, regs->end - regs->start + 1);
 	if (!host->regs)
 		goto err_ioremap;
 
@@ -1906,5 +1899,5 @@ late_initcall(atmci_init); /* try to load after dma driver when built-in */
 module_exit(atmci_exit);
 
 MODULE_DESCRIPTION("Atmel Multimedia Card Interface driver");
-MODULE_AUTHOR("Haavard Skinnemoen (Atmel)");
+MODULE_AUTHOR("Haavard Skinnemoen <haavard.skinnemoen@atmel.com>");
 MODULE_LICENSE("GPL v2");

@@ -227,10 +227,8 @@ struct s3cfb_global {
 	struct device		*dev;
 	struct clk		*clock;
 	struct regulator	*regulator;
-#ifdef CONFIG_MACH_ARIES
 	struct regulator	*vcc_lcd;
 	struct regulator	*vlcd;
-#endif
 	int			irq;
 	struct fb_info		**fb;
 
@@ -244,7 +242,7 @@ struct s3cfb_global {
 	enum s3cfb_output_t	output;
 	enum s3cfb_rgb_mode_t	rgb_mode;
 	struct s3cfb_lcd	*lcd;
-	u32			pixclock_hz;
+	u32      pixclock_hz;
 
 #ifdef CONFIG_HAS_WAKELOCK
 	struct early_suspend	early_suspend;
@@ -356,9 +354,6 @@ extern int s3cfb_set_window_size(struct s3cfb_global *ctrl, int id);
 extern int s3cfb_set_buffer_address(struct s3cfb_global *ctrl, int id);
 extern int s3cfb_set_buffer_size(struct s3cfb_global *ctrl, int id);
 extern int s3cfb_set_chroma_key(struct s3cfb_global *ctrl, int id);
-#if defined(CONFIG_FB_S3C_MDNIE)
-extern int s3cfb_ielcd_enable(struct s3cfb_global *ctrl, int en);
-#endif
 
 #ifdef CONFIG_HAS_WAKELOCK
 #ifdef CONFIG_HAS_EARLYSUSPEND
@@ -367,17 +362,12 @@ extern void s3cfb_late_resume(struct early_suspend *h);
 #endif
 #endif
 
-#if defined(CONFIG_FB_S3C_TL2796)
+#if defined CONFIG_FB_S3C_TL2796 || defined (CONFIG_FB_S3C_uPD161224)
 extern void tl2796_ldi_init(void);
 extern void tl2796_ldi_enable(void);
 extern void tl2796_ldi_disable(void);
 extern void lcd_cfg_gpio_early_suspend(void);
 extern void lcd_cfg_gpio_late_resume(void);
-#endif
-
-#if defined (CONFIG_FB_S3C_LVDS)
-void lms700_powerup(void);
-void lms700_powerdown(void);
 #endif
 
 #endif /* _S3CFB_H */

@@ -21,6 +21,10 @@
 #include <plat/fimc.h>
 #include <linux/clk.h>
 
+#ifdef CONFIG_VIDEO_M5MO //NAGSM_HQ_CAMERA_LEESUNGKOO_20110303
+#include <linux/wait.h>
+#endif
+
 #include "fimc.h"
 
 static int fimc_querycap(struct file *filp, void *fh,
@@ -30,7 +34,7 @@ static int fimc_querycap(struct file *filp, void *fh,
 
 	fimc_info1("%s: called\n", __func__);
 
-	strcpy(cap->driver, "Samsung FIMC Driver");
+	strcpy(cap->driver, "SEC FIMC Driver");
 	strlcpy(cap->card, ctrl->vd->name, sizeof(cap->card));
 	sprintf(cap->bus_info, "FIMC AHB-bus");
 
@@ -102,6 +106,25 @@ static int fimc_g_ctrl(struct file *filp, void *fh, struct v4l2_control *c)
 	return ret;
 }
 
+#if defined(CONFIG_VIDEO_M5MO)
+static int fimc_g_ext_ctrls(struct file *filp, void *fh, struct v4l2_ext_controls *c)
+{
+	struct fimc_control *ctrl = ((struct fimc_prv_data *)fh)->ctrl;
+	int ret = -1;
+
+	if (ctrl->cap != NULL) {
+		ret = fimc_g_ext_ctrls_capture(fh, c);
+	} else if (ctrl->out != NULL) {
+		/* How about "ret = fimc_s_ext_ctrls_output(fh, c);"? */
+	} else {
+		fimc_err("%s: Invalid case\n", __func__);
+		return -EINVAL;
+	}
+
+	return ret;
+}
+#endif
+
 static int fimc_s_ctrl(struct file *filp, void *fh, struct v4l2_control *c)
 {
 	struct fimc_control *ctrl = ((struct fimc_prv_data *)fh)->ctrl;
@@ -140,6 +163,12 @@ static int fimc_cropcap(struct file *filp, void *fh, struct v4l2_cropcap *a)
 	struct fimc_control *ctrl = ((struct fimc_prv_data *)fh)->ctrl;
 	int ret = -1;
 
+	fimc_info1("%s called: bounds l/t/w/h:%d/%d/%d/%d, defrect l/t/w/h:%d/%d/%d/%d, pixelaspect n/d=%d/%d\n"
+		,__func__,
+		a->bounds.left,a->bounds.top,a->bounds.width,a->bounds.height,
+		a->defrect.left,a->defrect.top,a->defrect.width,a->defrect.height,
+		a->pixelaspect.numerator,a->pixelaspect.denominator);
+
 	if (a->type == V4L2_BUF_TYPE_VIDEO_CAPTURE) {
 		ret = fimc_cropcap_capture(fh, a);
 	} else if (a->type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
@@ -175,6 +204,10 @@ static int fimc_s_crop(struct file *filp, void *fh, struct v4l2_crop *a)
 {
 	struct fimc_control *ctrl = ((struct fimc_prv_data *)fh)->ctrl;
 	int ret = -1;
+
+	fimc_info1("%s called: c l/t/w/h:%d/%d/%d/%d\n"
+		,__func__,
+		a->c.left,a->c.top,a->c.width,a->c.height);
 
 	if (a->type == V4L2_BUF_TYPE_VIDEO_CAPTURE) {
 		ret = fimc_s_crop_capture(fh, a);
@@ -219,6 +252,9 @@ static int fimc_streamoff(struct file *filp, void *fh, enum v4l2_buf_type i)
 	pdata = to_fimc_plat(ctrl->dev);
 
 	if (i == V4L2_BUF_TYPE_VIDEO_CAPTURE) {
+#ifdef CONFIG_VIDEO_M5MO //NAGSM_HQ_CAMERA_LEESUNGKOO_20110303
+	  wake_up(&ctrl->wq);
+#endif
 		ret = fimc_streamoff_capture(fh);
 	} else if (i == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
 		ret = fimc_streamoff_output(fh);
@@ -272,6 +308,9 @@ const struct v4l2_ioctl_ops fimc_v4l2_ops = {
 	.vidioc_reqbufs			= fimc_reqbufs,
 	.vidioc_querybuf		= fimc_querybuf,
 	.vidioc_g_ctrl			= fimc_g_ctrl,
+#if defined(CONFIG_VIDEO_M5MO)
+	.vidioc_g_ext_ctrls		= fimc_g_ext_ctrls,
+#endif
 	.vidioc_s_ctrl			= fimc_s_ctrl,
 	.vidioc_s_ext_ctrls		= fimc_s_ext_ctrls,
 	.vidioc_cropcap			= fimc_cropcap,

@@ -71,8 +71,7 @@ static void watchdog_stop(void)
 
 static int watchdog_probe(struct platform_device *pdev)
 {
-	watchdog_wq = alloc_workqueue("pet_watchdog",
-					WQ_UNBOUND | WQ_HIGHPRI, 1);
+	watchdog_wq = create_rt_workqueue("pet_watchdog");
 	watchdog_start();
 	return 0;
 }

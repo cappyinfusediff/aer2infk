@@ -25,8 +25,6 @@
 #define sysretl_audit ia32_ret_from_sys_call
 #endif
 
-	.section .entry.text, "ax"
-
 #define IA32_NR_syscalls ((ia32_syscall_end - ia32_sys_call_table)/8)
 
 	.macro IA32_ARG_FIXUP noebp=0
@@ -128,20 +126,26 @@ ENTRY(ia32_sysenter_target)
 	 */
 	ENABLE_INTERRUPTS(CLBR_NONE)
  	movl	%ebp,%ebp		/* zero extension */
-	pushq_cfi $__USER32_DS
+	pushq	$__USER32_DS
+	CFI_ADJUST_CFA_OFFSET 8
 	/*CFI_REL_OFFSET ss,0*/
-	pushq_cfi %rbp
+	pushq	%rbp
+	CFI_ADJUST_CFA_OFFSET 8
 	CFI_REL_OFFSET rsp,0
-	pushfq_cfi
+	pushfq
+	CFI_ADJUST_CFA_OFFSET 8
 	/*CFI_REL_OFFSET rflags,0*/
 	movl	8*3-THREAD_SIZE+TI_sysenter_return(%rsp), %r10d
 	CFI_REGISTER rip,r10
-	pushq_cfi $__USER32_CS
+	pushq	$__USER32_CS
+	CFI_ADJUST_CFA_OFFSET 8
 	/*CFI_REL_OFFSET cs,0*/
 	movl	%eax, %eax
-	pushq_cfi %r10
+	pushq	%r10
+	CFI_ADJUST_CFA_OFFSET 8
 	CFI_REL_OFFSET rip,0
-	pushq_cfi %rax
+	pushq	%rax
+	CFI_ADJUST_CFA_OFFSET 8
 	cld
 	SAVE_ARGS 0,0,1
  	/* no need to do an access_ok check here because rbp has been
@@ -178,9 +182,11 @@ sysexit_from_sys_call:
 	xorq	%r9,%r9
 	xorq	%r10,%r10
 	xorq	%r11,%r11
-	popfq_cfi
+	popfq
+	CFI_ADJUST_CFA_OFFSET -8
 	/*CFI_RESTORE rflags*/
-	popq_cfi %rcx				/* User %esp */
+	popq	%rcx				/* User %esp */
+	CFI_ADJUST_CFA_OFFSET -8
 	CFI_REGISTER rsp,rcx
 	TRACE_IRQS_ON
 	ENABLE_INTERRUPTS_SYSEXIT32
@@ -208,7 +214,7 @@ sysexit_from_sys_call:
 	testl $(_TIF_ALLWORK_MASK & ~_TIF_SYSCALL_AUDIT),TI_flags(%r10)
 	jnz ia32_ret_from_sys_call
 	TRACE_IRQS_ON
-	ENABLE_INTERRUPTS(CLBR_NONE)
+	sti
 	movl %eax,%esi		/* second arg, syscall return value */
 	cmpl $0,%eax		/* is it < 0? */
 	setl %al		/* 1 if so, 0 if not */
@@ -218,7 +224,7 @@ sysexit_from_sys_call:
 	GET_THREAD_INFO(%r10)
 	movl RAX-ARGOFFSET(%rsp),%eax	/* reload syscall return value */
 	movl $(_TIF_ALLWORK_MASK & ~_TIF_SYSCALL_AUDIT),%edi
-	DISABLE_INTERRUPTS(CLBR_NONE)
+	cli
 	TRACE_IRQS_OFF
 	testl %edi,TI_flags(%r10)
 	jz \exit
@@ -415,7 +421,8 @@ ENTRY(ia32_syscall)
 	 */
 	ENABLE_INTERRUPTS(CLBR_NONE)
 	movl %eax,%eax
-	pushq_cfi %rax
+	pushq %rax
+	CFI_ADJUST_CFA_OFFSET 8
 	cld
 	/* note the registers are not zero extended to the sf.
 	   this could be a problem. */
@@ -841,13 +848,4 @@ ia32_sys_call_table:
 	.quad compat_sys_rt_tgsigqueueinfo	/* 335 */
 	.quad sys_perf_event_open
 	.quad compat_sys_recvmmsg
-	.quad sys_fanotify_init
-	.quad sys32_fanotify_mark
-	.quad sys_prlimit64		/* 340 */
-	.quad sys_name_to_handle_at
-	.quad compat_sys_open_by_handle_at
-	.quad compat_sys_clock_adjtime
-	.quad sys_syncfs
-	.quad compat_sys_sendmmsg	/* 345 */
-	.quad sys_setns
 ia32_syscall_end:

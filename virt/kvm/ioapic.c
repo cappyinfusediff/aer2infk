@@ -1,6 +1,5 @@
 /*
  *  Copyright (C) 2001  MandrakeSoft S.A.
- *  Copyright 2010 Red Hat, Inc. and/or its affiliates.
  *
  *    MandrakeSoft S.A.
  *    43, rue d'Aboukir
@@ -73,12 +72,9 @@ static unsigned long ioapic_read_indirect(struct kvm_ioapic *ioapic,
 			u32 redir_index = (ioapic->ioregsel - 0x10) >> 1;
 			u64 redir_content;
 
-			if (redir_index < IOAPIC_NUM_PINS)
-				redir_content =
-					ioapic->redirtbl[redir_index].bits;
-			else
-				redir_content = ~0ULL;
+			ASSERT(redir_index < IOAPIC_NUM_PINS);
 
+			redir_content = ioapic->redirtbl[redir_index].bits;
 			result = (ioapic->ioregsel & 0x1) ?
 			    (redir_content >> 32) & 0xffffffff :
 			    redir_content & 0xffffffff;
@@ -155,7 +151,7 @@ static void ioapic_write_indirect(struct kvm_ioapic *ioapic, u32 val)
 		update_handled_vectors(ioapic);
 		mask_after = e->fields.mask;
 		if (mask_before != mask_after)
-			kvm_fire_mask_notifiers(ioapic->kvm, KVM_IRQCHIP_IOAPIC, index, mask_after);
+			kvm_fire_mask_notifiers(ioapic->kvm, index, mask_after);
 		if (e->fields.trig_mode == IOAPIC_LEVEL_TRIG
 		    && ioapic->irr & (1 << index))
 			ioapic_service(ioapic, index);
@@ -170,7 +166,7 @@ static int ioapic_deliver(struct kvm_ioapic *ioapic, int irq)
 
 	ioapic_debug("dest=%x dest_mode=%x delivery_mode=%x "
 		     "vector=%x trig_mode=%x\n",
-		     entry->fields.dest_id, entry->fields.dest_mode,
+		     entry->fields.dest, entry->fields.dest_mode,
 		     entry->fields.delivery_mode, entry->fields.vector,
 		     entry->fields.trig_mode);
 

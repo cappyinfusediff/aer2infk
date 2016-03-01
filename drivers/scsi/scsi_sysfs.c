@@ -378,7 +378,7 @@ struct bus_type scsi_bus_type = {
         .name		= "scsi",
         .match		= scsi_bus_match,
 	.uevent		= scsi_bus_uevent,
-#ifdef CONFIG_PM
+#ifdef CONFIG_PM_OPS
 	.pm		= &scsi_bus_pm_ops,
 #endif
 };
@@ -859,15 +859,13 @@ int scsi_sysfs_add_sdev(struct scsi_device *sdev)
 
 	error = device_add(&sdev->sdev_gendev);
 	if (error) {
-		sdev_printk(KERN_INFO, sdev,
-				"failed to add device: %d\n", error);
+		printk(KERN_INFO "error 1\n");
 		return error;
 	}
 	device_enable_async_suspend(&sdev->sdev_dev);
 	error = device_add(&sdev->sdev_dev);
 	if (error) {
-		sdev_printk(KERN_INFO, sdev,
-				"failed to add class device: %d\n", error);
+		printk(KERN_INFO "error 2\n");
 		device_del(&sdev->sdev_gendev);
 		return error;
 	}
@@ -962,6 +960,7 @@ static void __scsi_remove_target(struct scsi_target *starget)
 	struct scsi_device *sdev;
 
 	spin_lock_irqsave(shost->host_lock, flags);
+	starget->reap_ref++;
  restart:
 	list_for_each_entry(sdev, &shost->__devices, siblings) {
 		if (sdev->channel != starget->channel ||
@@ -975,6 +974,14 @@ static void __scsi_remove_target(struct scsi_target *starget)
 		goto restart;
 	}
 	spin_unlock_irqrestore(shost->host_lock, flags);
+	scsi_target_reap(starget);
+}
+
+static int __remove_child (struct device * dev, void * data)
+{
+	if (scsi_is_target_device(dev))
+		__scsi_remove_target(to_scsi_target(dev));
+	return 0;
 }
 
 /**
@@ -987,32 +994,16 @@ static void __scsi_remove_target(struct scsi_target *starget)
  */
 void scsi_remove_target(struct device *dev)
 {
-	struct Scsi_Host *shost = dev_to_shost(dev->parent);
-	struct scsi_target *starget, *last = NULL;
-	unsigned long flags;
+	struct device *rdev;
 
-	/* remove targets being careful to lookup next entry before
-	 * deleting the last
-	 */
-	spin_lock_irqsave(shost->host_lock, flags);
-	list_for_each_entry(starget, &shost->__targets, siblings) {
-		if (starget->state == STARGET_DEL)
-			continue;
-		if (starget->dev.parent == dev || &starget->dev == dev) {
-			/* assuming new targets arrive at the end */
-			starget->reap_ref++;
-			spin_unlock_irqrestore(shost->host_lock, flags);
-			if (last)
-				scsi_target_reap(last);
-			last = starget;
-			__scsi_remove_target(starget);
-			spin_lock_irqsave(shost->host_lock, flags);
-		}
+	if (scsi_is_target_device(dev)) {
+		__scsi_remove_target(to_scsi_target(dev));
+		return;
 	}
-	spin_unlock_irqrestore(shost->host_lock, flags);
 
-	if (last)
-		scsi_target_reap(last);
+	rdev = get_device(dev);
+	device_for_each_child(dev, NULL, __remove_child);
+	put_device(rdev);
 }
 EXPORT_SYMBOL(scsi_remove_target);
 

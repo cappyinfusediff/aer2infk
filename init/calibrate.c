@@ -9,6 +9,7 @@
 #include <linux/init.h>
 #include <linux/timex.h>
 #include <linux/smp.h>
+#include <linux/percpu.h>
 
 unsigned long lpj_fine;
 unsigned long preset_lpj;
@@ -170,8 +171,8 @@ static unsigned long __cpuinit calibrate_delay_direct(void) {return 0;}
 
 /*
  * This is the number of bits of precision for the loops_per_jiffy.  Each
- * time we refine our estimate after the first takes 1.5/HZ seconds, so try
- * to start with a good estimate.
+ * bit takes on average 1.5/HZ seconds.  This (like the original) is a little
+ * better than 1%
  * For the boot cpu we can skip the delay calibration and assign it a value
  * calculated based on the timer frequency.
  * For the rest of the CPUs we cannot assume that the timer frequency is same as
@@ -181,74 +182,81 @@ static unsigned long __cpuinit calibrate_delay_direct(void) {return 0;}
 
 static unsigned long __cpuinit calibrate_delay_converge(void)
 {
-	/* First stage - slowly accelerate to find initial bounds */
-	unsigned long lpj, lpj_base, ticks, loopadd, loopadd_base, chop_limit;
-	int trials = 0, band = 0, trial_in_band = 0;
+  /* First stage - slowly accelerate to find initial bounds */
+  unsigned long lpj, lpj_base, ticks, loopadd, loopadd_base, chop_limit;
+  int trials = 0, band = 0, trial_in_band = 0;
 
-	lpj = (1<<12);
+  lpj = (1<<12);
 
-	/* wait for "start of" clock tick */
-	ticks = jiffies;
-	while (ticks == jiffies)
-		; /* nothing */
-	/* Go .. */
-	ticks = jiffies;
-	do {
-		if (++trial_in_band == (1<<band)) {
-			++band;
-			trial_in_band = 0;
-		}
-		__delay(lpj * band);
-		trials += band;
-	} while (ticks == jiffies);
-	/*
-	 * We overshot, so retreat to a clear underestimate. Then estimate
-	 * the largest likely undershoot. This defines our chop bounds.
-	 */
-	trials -= band;
-	loopadd_base = lpj * band;
-	lpj_base = lpj * trials;
+  /* wait for "start of" clock tick */
+  ticks = jiffies;
+  while (ticks == jiffies)
+    ; /* nothing */
+  /* Go .. */
+  ticks = jiffies;
+  do {
+    if (++trial_in_band == (1<<band)) {
+      ++band;
+      trial_in_band = 0;
+    }
+    __delay(lpj * band);
+    trials += band;
+  } while (ticks == jiffies);
+  /*
+   * We overshot, so retreat to a clear underestimate. Then estimate
+   * the largest likely undershoot. This defines our chop bounds.
+   */
+  trials -= band;
+  loopadd_base = lpj * band;
+  lpj_base = lpj * trials;
 
 recalibrate:
-	lpj = lpj_base;
-	loopadd = loopadd_base;
+  lpj = lpj_base;
+  loopadd = loopadd_base;
 
-	/*
-	 * Do a binary approximation to get lpj set to
-	 * equal one clock (up to LPS_PREC bits)
-	 */
-	chop_limit = lpj >> LPS_PREC;
-	while (loopadd > chop_limit) {
-		lpj += loopadd;
-		ticks = jiffies;
-		while (ticks == jiffies)
-			; /* nothing */
-		ticks = jiffies;
-		__delay(lpj);
-		if (jiffies != ticks)	/* longer than 1 tick */
-			lpj -= loopadd;
-		loopadd >>= 1;
-	}
-	/*
-	 * If we incremented every single time possible, presume we've
-	 * massively underestimated initially, and retry with a higher
-	 * start, and larger range. (Only seen on x86_64, due to SMIs)
-	 */
-	if (lpj + loopadd * 2 == lpj_base + loopadd_base * 2) {
-		lpj_base = lpj;
-		loopadd_base <<= 2;
-		goto recalibrate;
-	}
+  /*
+   * Do a binary approximation to get lpj set to
+   * equal one clock (up to LPS_PREC bits)
+   */
+  chop_limit = lpj >> LPS_PREC;
+  while (loopadd > chop_limit) {
+    lpj += loopadd;
+    ticks = jiffies;
+    while (ticks == jiffies)
+      ; /* nothing */
+    ticks = jiffies;
+    __delay(lpj);
+    if (jiffies != ticks)  /* longer than 1 tick */
+      lpj -= loopadd;
+    loopadd >>= 1;
+  }
+  /*
+   * If we incremented every single time possible, presume we've
+   * massively underestimated initially, and retry with a higher
+   * start, and larger range. (Only seen on x86_64, due to SMIs)
+   */
+  if (lpj + loopadd * 2 == lpj_base + loopadd_base * 2) {
+    lpj_base = lpj;
+    loopadd_base <<= 2;
+    goto recalibrate;
+  }
 
-	return lpj;
+  return lpj;
 }
+
+static DEFINE_PER_CPU(unsigned long, cpu_loops_per_jiffy) = { 0 };
 
 void __cpuinit calibrate_delay(void)
 {
 	unsigned long lpj;
 	static bool printed;
+	int this_cpu = smp_processor_id();
 
-	if (preset_lpj) {
+	if (per_cpu(cpu_loops_per_jiffy, this_cpu)) {
+		lpj = per_cpu(cpu_loops_per_jiffy, this_cpu);
+		pr_info("Calibrating delay loop (skipped) "
+				"already calibrated this CPU");
+	} else if (preset_lpj) {
 		lpj = preset_lpj;
 		if (!printed)
 			pr_info("Calibrating delay loop (skipped) "
@@ -264,8 +272,9 @@ void __cpuinit calibrate_delay(void)
 	} else {
 		if (!printed)
 			pr_info("Calibrating delay loop... ");
-		lpj = calibrate_delay_converge();
+	lpj = calibrate_delay_converge();
 	}
+	per_cpu(cpu_loops_per_jiffy, this_cpu) = lpj;
 	if (!printed)
 		pr_cont("%lu.%02lu BogoMIPS (lpj=%lu)\n",
 			lpj/(500000/HZ),

@@ -54,10 +54,10 @@ static inline void * __must_check ERR_CAST(const void *ptr)
 
 static inline int __must_check PTR_RET(const void *ptr)
 {
-	if (IS_ERR(ptr))
-		return PTR_ERR(ptr);
-	else
-		return 0;
+  if (IS_ERR(ptr))
+    return PTR_ERR(ptr);
+  else
+    return 0;
 }
 
 #endif

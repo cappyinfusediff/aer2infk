@@ -30,6 +30,7 @@
 #include <linux/init.h>
 #include <linux/poll.h>
 #include <linux/smp.h>
+#include <linux/smp_lock.h>
 #include <linux/major.h>
 #include <linux/fs.h>
 #include <linux/device.h>
@@ -174,9 +175,6 @@ static int msr_open(struct inode *inode, struct file *file)
 {
 	unsigned int cpu;
 	struct cpuinfo_x86 *c;
-
-	if (!capable(CAP_SYS_RAWIO))
-		return -EPERM;
 
 	cpu = iminor(file->f_path.dentry->d_inode);
 	if (cpu >= nr_cpu_ids || !cpu_online(cpu))

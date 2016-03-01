@@ -179,27 +179,23 @@ static ssize_t fuse_conn_congestion_threshold_write(struct file *file,
 static const struct file_operations fuse_ctl_abort_ops = {
 	.open = nonseekable_open,
 	.write = fuse_conn_abort_write,
-	.llseek = no_llseek,
 };
 
 static const struct file_operations fuse_ctl_waiting_ops = {
 	.open = nonseekable_open,
 	.read = fuse_conn_waiting_read,
-	.llseek = no_llseek,
 };
 
 static const struct file_operations fuse_conn_max_background_ops = {
 	.open = nonseekable_open,
 	.read = fuse_conn_max_background_read,
 	.write = fuse_conn_max_background_write,
-	.llseek = no_llseek,
 };
 
 static const struct file_operations fuse_conn_congestion_threshold_ops = {
 	.open = nonseekable_open,
 	.read = fuse_conn_congestion_threshold_read,
 	.write = fuse_conn_congestion_threshold_write,
-	.llseek = no_llseek,
 };
 
 static struct dentry *fuse_ctl_add_dentry(struct dentry *parent,
@@ -322,10 +318,12 @@ static int fuse_ctl_fill_super(struct super_block *sb, void *data, int silent)
 	return 0;
 }
 
-static struct dentry *fuse_ctl_mount(struct file_system_type *fs_type,
-			int flags, const char *dev_name, void *raw_data)
+static int fuse_ctl_get_sb(struct file_system_type *fs_type, int flags,
+			const char *dev_name, void *raw_data,
+			struct vfsmount *mnt)
 {
-	return mount_single(fs_type, flags, raw_data, fuse_ctl_fill_super);
+	return get_sb_single(fs_type, flags, raw_data,
+				fuse_ctl_fill_super, mnt);
 }
 
 static void fuse_ctl_kill_sb(struct super_block *sb)
@@ -344,7 +342,7 @@ static void fuse_ctl_kill_sb(struct super_block *sb)
 static struct file_system_type fuse_ctl_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "fusectl",
-	.mount		= fuse_ctl_mount,
+	.get_sb		= fuse_ctl_get_sb,
 	.kill_sb	= fuse_ctl_kill_sb,
 };
 

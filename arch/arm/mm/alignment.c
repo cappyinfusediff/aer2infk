@@ -721,6 +721,7 @@ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 	unsigned long instr = 0, instrptr;
 	int (*handler)(unsigned long addr, unsigned long instr, struct pt_regs *regs);
 	unsigned int type;
+	mm_segment_t fs;
 	unsigned int fault;
 	u16 tinstr = 0;
 	int isize = 4;
@@ -728,15 +729,16 @@ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 
 	instrptr = instruction_pointer(regs);
 
+	fs = get_fs();
+	set_fs(KERNEL_DS);
 	if (thumb_mode(regs)) {
-		u16 *ptr = (u16 *)(instrptr & ~1);
-		fault = probe_kernel_address(ptr, tinstr);
+		fault = __get_user(tinstr, (u16 *)(instrptr & ~1));
 		if (!fault) {
 			if (cpu_architecture() >= CPU_ARCH_ARMv7 &&
 			    IS_T32(tinstr)) {
 				/* Thumb-2 32-bit */
 				u16 tinst2 = 0;
-				fault = probe_kernel_address(ptr + 1, tinst2);
+				fault = __get_user(tinst2, (u16 *)(instrptr+2));
 				instr = (tinstr << 16) | tinst2;
 				thumb2_32b = 1;
 			} else {
@@ -745,7 +747,8 @@ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 			}
 		}
 	} else
-		fault = probe_kernel_address(instrptr, instr);
+		fault = __get_user(instr, (u32 *)instrptr);
+	set_fs(fs);
 
 	if (fault) {
 		type = TYPE_FAULT;
@@ -823,6 +826,7 @@ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 			handler = do_alignment_t32_to_handler(&instr, regs, &offset);
 		else
 			handler = do_alignment_ldmstm;
+			offset.un = 0;
 		break;
 
 	default:
@@ -882,23 +886,8 @@ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 
 	if (ai_usermode & UM_SIGNAL)
 		force_sig(SIGBUS, current);
-	else {
-		/*
-		 * We're about to disable the alignment trap and return to
-		 * user space.  But if an interrupt occurs before actually
-		 * reaching user space, then the IRQ vector entry code will
-		 * notice that we were still in kernel space and therefore
-		 * the alignment trap won't be re-enabled in that case as it
-		 * is presumed to be always on from kernel space.
-		 * Let's prevent that race by disabling interrupts here (they
-		 * are disabled on the way back to user space anyway in
-		 * entry-common.S) and disable the alignment trap only if
-		 * there is no work pending for this thread.
-		 */
-		raw_local_irq_disable();
-		if (!(current_thread_info()->flags & _TIF_WORK_MASK))
-			set_cr(cr_no_alignment);
-	}
+	else
+		set_cr(cr_no_alignment);
 
 	return 0;
 }
@@ -936,20 +925,8 @@ static int __init alignment_init(void)
 		ai_usermode = UM_FIXUP;
 	}
 
-	hook_fault_code(1, do_alignment, SIGBUS, BUS_ADRALN,
-			"alignment exception");
-
-	/*
-	 * ARMv6K and ARMv7 use fault status 3 (0b00011) as Access Flag section
-	 * fault, not as alignment error.
-	 *
-	 * TODO: handle ARMv6K properly. Runtime check for 'K' extension is
-	 * needed.
-	 */
-	if (cpu_architecture() <= CPU_ARCH_ARMv6) {
-		hook_fault_code(3, do_alignment, SIGBUS, BUS_ADRALN,
-				"alignment exception");
-	}
+	hook_fault_code(1, do_alignment, SIGILL, "alignment exception");
+	hook_fault_code(3, do_alignment, SIGILL, "alignment exception");
 
 	return 0;
 }

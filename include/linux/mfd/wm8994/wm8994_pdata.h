@@ -17,11 +17,8 @@
 
 struct wm8994_platform_data {
 	int ldo;
-	int ear_sel;
 	void (*set_mic_bias)(bool on);
-#ifdef CONFIG_SAMSUNG_YPG1
-	void (*set_ear_path)(bool on);
-#endif
+	void (*set_submic_bias)(bool on);
 };
 
 #endif

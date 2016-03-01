@@ -25,7 +25,6 @@
 #include <asm/cputable.h>
 #include <asm/thread_info.h>
 #include <asm/kexec.h>
-#include <asm/ptrace.h>
 
 	.text
 

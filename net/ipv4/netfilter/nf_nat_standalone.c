@@ -31,7 +31,6 @@
 #ifdef CONFIG_XFRM
 static void nat_decode_session(struct sk_buff *skb, struct flowi *fl)
 {
-	struct flowi4 *fl4 = &fl->u.ip4;
 	const struct nf_conn *ct;
 	const struct nf_conntrack_tuple *t;
 	enum ip_conntrack_info ctinfo;
@@ -50,25 +49,25 @@ static void nat_decode_session(struct sk_buff *skb, struct flowi *fl)
 		statusbit = IPS_SRC_NAT;
 
 	if (ct->status & statusbit) {
-		fl4->daddr = t->dst.u3.ip;
+		fl->fl4_dst = t->dst.u3.ip;
 		if (t->dst.protonum == IPPROTO_TCP ||
 		    t->dst.protonum == IPPROTO_UDP ||
 		    t->dst.protonum == IPPROTO_UDPLITE ||
 		    t->dst.protonum == IPPROTO_DCCP ||
 		    t->dst.protonum == IPPROTO_SCTP)
-			fl4->fl4_dport = t->dst.u.tcp.port;
+			fl->fl_ip_dport = t->dst.u.tcp.port;
 	}
 
 	statusbit ^= IPS_NAT_MASK;
 
 	if (ct->status & statusbit) {
-		fl4->saddr = t->src.u3.ip;
+		fl->fl4_src = t->src.u3.ip;
 		if (t->dst.protonum == IPPROTO_TCP ||
 		    t->dst.protonum == IPPROTO_UDP ||
 		    t->dst.protonum == IPPROTO_UDPLITE ||
 		    t->dst.protonum == IPPROTO_DCCP ||
 		    t->dst.protonum == IPPROTO_SCTP)
-			fl4->fl4_sport = t->src.u.tcp.port;
+			fl->fl_ip_sport = t->src.u.tcp.port;
 	}
 }
 #endif
@@ -132,7 +131,13 @@ nf_nat_fn(unsigned int hooknum,
 		if (!nf_nat_initialized(ct, maniptype)) {
 			unsigned int ret;
 
-			ret = nf_nat_rule_find(skb, hooknum, in, out, ct);
+			if (hooknum == NF_INET_LOCAL_IN)
+				/* LOCAL_IN hook doesn't have a chain!  */
+				ret = alloc_null_binding(ct, hooknum);
+			else
+				ret = nf_nat_rule_find(skb, hooknum, in, out,
+						       ct);
+
 			if (ret != NF_ACCEPT)
 				return ret;
 		} else
@@ -194,8 +199,7 @@ nf_nat_out(unsigned int hooknum,
 
 		if ((ct->tuplehash[dir].tuple.src.u3.ip !=
 		     ct->tuplehash[!dir].tuple.dst.u3.ip) ||
-		    (ct->tuplehash[dir].tuple.dst.protonum != IPPROTO_ICMP &&
-		     ct->tuplehash[dir].tuple.src.u.all !=
+		    (ct->tuplehash[dir].tuple.src.u.all !=
 		     ct->tuplehash[!dir].tuple.dst.u.all)
 		   )
 			return ip_xfrm_me_harder(skb) == 0 ? ret : NF_DROP;
@@ -231,8 +235,7 @@ nf_nat_local_fn(unsigned int hooknum,
 				ret = NF_DROP;
 		}
 #ifdef CONFIG_XFRM
-		else if (ct->tuplehash[dir].tuple.dst.protonum != IPPROTO_ICMP &&
-			 ct->tuplehash[dir].tuple.dst.u.all !=
+		else if (ct->tuplehash[dir].tuple.dst.u.all !=
 			 ct->tuplehash[!dir].tuple.src.u.all)
 			if (ip_xfrm_me_harder(skb))
 				ret = NF_DROP;

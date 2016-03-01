@@ -241,7 +241,8 @@ static void dump_dmastat(struct cardinfo *card, unsigned int dmastat)
  *
  * Whenever IO on the active page completes, the Ready page is activated
  * and the ex-Active page is clean out and made Ready.
- * Otherwise the Ready page is only activated when it becomes full.
+ * Otherwise the Ready page is only activated when it becomes full, or
+ * when mm_unplug_device is called via the unplug_io_fn.
  *
  * If a request arrives while both pages a full, it is queued, and b_rdev is
  * overloaded to record whether it was a read or a write.
@@ -330,6 +331,17 @@ static inline void reset_page(struct mm_page *page)
 	page->headcnt = 0;
 	page->bio = NULL;
 	page->biotail = &page->bio;
+}
+
+static void mm_unplug_device(struct request_queue *q)
+{
+	struct cardinfo *card = q->queuedata;
+	unsigned long flags;
+
+	spin_lock_irqsave(&card->lock, flags);
+	if (blk_remove_plug(q))
+		activate(card);
+	spin_unlock_irqrestore(&card->lock, flags);
 }
 
 /*
@@ -513,44 +525,6 @@ static void process_page(unsigned long data)
 	}
 }
 
-struct mm_plug_cb {
-	struct blk_plug_cb cb;
-	struct cardinfo *card;
-};
-
-static void mm_unplug(struct blk_plug_cb *cb)
-{
-	struct mm_plug_cb *mmcb = container_of(cb, struct mm_plug_cb, cb);
-
-	spin_lock_irq(&mmcb->card->lock);
-	activate(mmcb->card);
-	spin_unlock_irq(&mmcb->card->lock);
-	kfree(mmcb);
-}
-
-static int mm_check_plugged(struct cardinfo *card)
-{
-	struct blk_plug *plug = current->plug;
-	struct mm_plug_cb *mmcb;
-
-	if (!plug)
-		return 0;
-
-	list_for_each_entry(mmcb, &plug->cb_list, cb.list) {
-		if (mmcb->cb.callback == mm_unplug && mmcb->card == card)
-			return 1;
-	}
-	/* Not currently on the callback list */
-	mmcb = kmalloc(sizeof(*mmcb), GFP_ATOMIC);
-	if (!mmcb)
-		return 0;
-
-	mmcb->card = card;
-	mmcb->cb.callback = mm_unplug;
-	list_add(&mmcb->cb.list, &plug->cb_list);
-	return 1;
-}
-
 static int mm_make_request(struct request_queue *q, struct bio *bio)
 {
 	struct cardinfo *card = q->queuedata;
@@ -561,8 +535,7 @@ static int mm_make_request(struct request_queue *q, struct bio *bio)
 	*card->biotail = bio;
 	bio->bi_next = NULL;
 	card->biotail = &bio->bi_next;
-	if (bio->bi_rw & REQ_SYNC || !mm_check_plugged(card))
-		activate(card);
+	blk_plug_device(q);
 	spin_unlock_irq(&card->lock);
 
 	return 0;
@@ -806,10 +779,20 @@ static int mm_getgeo(struct block_device *bdev, struct hd_geometry *geo)
 	return 0;
 }
 
+/*
+ * Future support for removable devices
+ */
+static int mm_check_change(struct gendisk *disk)
+{
+/*  struct cardinfo *dev = disk->private_data; */
+	return 0;
+}
+
 static const struct block_device_operations mm_fops = {
 	.owner		= THIS_MODULE,
 	.getgeo		= mm_getgeo,
 	.revalidate_disk = mm_revalidate,
+	.media_changed	= mm_check_change,
 };
 
 static int __devinit mm_pci_probe(struct pci_dev *dev,
@@ -924,6 +907,7 @@ static int __devinit mm_pci_probe(struct pci_dev *dev,
 	blk_queue_make_request(card->queue, mm_make_request);
 	card->queue->queue_lock = &card->lock;
 	card->queue->queuedata = card;
+	card->queue->unplug_fn = mm_unplug_device;
 
 	tasklet_init(&card->tasklet, process_page, (unsigned long)card);
 

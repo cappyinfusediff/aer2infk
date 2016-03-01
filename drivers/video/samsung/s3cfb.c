@@ -33,42 +33,63 @@
 #include <plat/clock.h>
 #include <plat/cpu-freq.h>
 #include <plat/media.h>
+#include <linux/delay.h>
+#include <mach/regs-clock.h>
 #ifdef CONFIG_HAS_WAKELOCK
 #include <linux/wakelock.h>
 #include <linux/earlysuspend.h>
 #include <linux/suspend.h>
 #endif
-#ifdef CONFIG_MACH_P1
-#include <linux/mfd/max8998.h>
-#include <linux/sec_battery.h>
-#include <mach/gpio.h>
-#include <mach/gpio-p1.h>
-#include "logo_rgb24_wvga_portrait_p1.h"
-#else //CONFIG_MACH_ARIES
-#include "logo_rgb24_wvga_portrait.h"
-#endif
-#include <mach/regs-clock.h>
 #include "s3cfb.h"
+
+#include "logo_rgb24_wvga_portrait.h"
 
 #ifdef CONFIG_FB_S3C_MDNIE
 #include "s3cfb_mdnie.h"
 #include <linux/delay.h>
-#endif
-
-#ifdef CONFIG_FB_S3C_CMC623
-#include "tune_cmc623.h"
-#endif
-
-#if defined(CONFIG_MACH_P1)
-#define DISPLAY_BOOT_PROGRESS
-
-static int show_progress = 1;
-extern unsigned int HWREV;
+#include <mach/regs-clock.h>
 #endif
 
 #if (CONFIG_FB_S3C_NUM_OVLY_WIN >= CONFIG_FB_S3C_DEFAULT_WINDOW)
 #error "FB_S3C_NUM_OVLY_WIN should be less than FB_S3C_DEFAULT_WINDOW"
 #endif
+
+#if defined(CONFIG_FB_S3C_LDI) 
+#include "ldi_common.h"
+extern void lcd_cfg_gpio_early_suspend(void);
+extern void lcd_cfg_gpio_late_resume(void);
+#endif
+//#include<mach/gpio.h> //ansari
+
+#define DISPLAY_BOOT_PROGRESS
+
+/*
+ *  Mark for GetLog (tkhwang)
+ */
+
+struct struct_frame_buf_mark {
+	u32 special_mark_1;
+	u32 special_mark_2;
+	u32 special_mark_3;
+	u32 special_mark_4;
+	void *p_fb;
+	u32 resX;
+	u32 resY;
+	u32 bpp;    //color depth : 16 or 24
+	u32 frames; // frame buffer count : 2
+};
+
+static struct struct_frame_buf_mark  frame_buf_mark = {
+	.special_mark_1 = (('*' << 24) | ('^' << 16) | ('^' << 8) | ('*' << 0)),
+	.special_mark_2 = (('I' << 24) | ('n' << 16) | ('f' << 8) | ('o' << 0)),
+	.special_mark_3 = (('H' << 24) | ('e' << 16) | ('r' << 8) | ('e' << 0)),
+	.special_mark_4 = (('f' << 24) | ('b' << 16) | ('u' << 8) | ('f' << 0)),
+	.p_fb   = 0,
+	.resX   = 480,
+	.resY   = 800,
+	.bpp    = 32,
+	.frames = 2
+};
 
 struct s3c_platform_fb *to_fb_plat(struct device *dev)
 {
@@ -82,14 +103,14 @@ static int progress_flag = 0;
 static int progress_pos;
 static struct timer_list progress_timer;
 
-#define PROGRESS_BAR_LEFT_POS	80 //116
-#define PROGRESS_BAR_RIGHT_POS	530 //490
-#define PROGRESS_BAR_START_X	328
-#define PROGRESS_BAR_WIDTH		4
-#define PROGRESS_BAR_HEIGHT		8
+#define PROGRESS_BAR_LEFT_POS	54
+#define PROGRESS_BAR_RIGHT_POS	425
+#define PROGRESS_BAR_START_Y	576
+#define PROGRESS_BAR_WIDTH	4
+#define PROGRESS_BAR_HEIGHT	8
 
 static unsigned char anycall_progress_bar_left[] =
-{
+{	
 	0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00,
 	0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00,
 	0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00, 0xf3, 0xc5, 0x00, 0x00, 0xf3, 0xc5, 0x00, 0x00,
@@ -101,13 +122,13 @@ static unsigned char anycall_progress_bar_left[] =
 };
 
 static unsigned char anycall_progress_bar_right[] =
-{
+{	
 	0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00,
 	0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00,
-	0xf3, 0xc5, 0x00, 0x00, 0xf3, 0xc5, 0x00, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00,
-	0xf3, 0xc5, 0x00, 0x00, 0xf3, 0xc5, 0x00, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00,
-	0xf3, 0xc5, 0x00, 0x00, 0xf3, 0xc5, 0x00, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00,
-	0xf3, 0xc5, 0x00, 0x00, 0xf3, 0xc5, 0x00, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00,
+	0xf3, 0xc5, 0x00, 0x00, 0xf3, 0xc5, 0x00, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00, 
+	0xf3, 0xc5, 0x00, 0x00, 0xf3, 0xc5, 0x00, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00, 
+	0xf3, 0xc5, 0x00, 0x00, 0xf3, 0xc5, 0x00, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00, 
+	0xf3, 0xc5, 0x00, 0x00, 0xf3, 0xc5, 0x00, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00, 
 	0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00,
 	0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00
 };
@@ -118,7 +139,7 @@ static unsigned char anycall_progress_bar_center[] =
 	0xf3, 0xc5, 0x00, 0x00, 0xf3, 0xc5, 0x00, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00
 };
 
-static unsigned char anycall_progress_bar[] =
+static unsigned char anycall_progress_bar[] = 
 {
 	0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00,
 	0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00, 0x33, 0x33, 0x33, 0x00,
@@ -133,6 +154,9 @@ static unsigned char anycall_progress_bar[] =
 static void s3cfb_start_progress(struct fb_info *fb);
 static void s3cfb_stop_progress(void);
 static void progress_timer_handler(unsigned long data);
+
+static int show_progress = 1;
+module_param_named(progress, show_progress, bool, 0);
 #endif
 
 static unsigned int bootloaderfb;
@@ -140,7 +164,6 @@ module_param_named(bootloaderfb, bootloaderfb, uint, 0444);
 MODULE_PARM_DESC(bootloaderfb, "Address of booting logo image in Bootloader");
 
 #ifndef CONFIG_FRAMEBUFFER_CONSOLE
-
 static int s3cfb_draw_logo(struct fb_info *fb)
 {
 #ifdef CONFIG_FB_S3C_SPLASH_SCREEN
@@ -181,6 +204,17 @@ static int s3cfb_draw_logo(struct fb_info *fb)
 		}
 	}
 #endif
+/*
+	if (bootloaderfb) {
+		u8 *logo_virt_buf;
+		logo_virt_buf = ioremap_nocache(bootloaderfb,
+				fb->var.yres * fb->fix.line_length);
+
+		memcpy(fb->screen_base, logo_virt_buf,
+				fb->var.yres * fb->fix.line_length);
+		iounmap(logo_virt_buf);
+	}
+*/
 	if (readl(S5P_INFORM5)) //LPM_CHARGING mode
 		memcpy(fb->screen_base, charging, fb->var.yres * fb->fix.line_length);
 	else
@@ -188,7 +222,6 @@ static int s3cfb_draw_logo(struct fb_info *fb)
 	return 0;
 }
 #endif
-
 static irqreturn_t s3cfb_irq_frame(int irq, void *data)
 {
 	struct s3cfb_global *fbdev = (struct s3cfb_global *)data;
@@ -201,12 +234,14 @@ static irqreturn_t s3cfb_irq_frame(int irq, void *data)
 
 	return IRQ_HANDLED;
 }
+
 static int s3cfb_vsync_timestamp_changed(struct s3cfb_global *fbdev,
 		ktime_t prev_timestamp)
 {
 	rmb();
 	return !ktime_equal(prev_timestamp, fbdev->vsync_timestamp);
 }
+
 static void s3cfb_set_window(struct s3cfb_global *ctrl, int id, int enable)
 {
 	struct s3cfb_window *win = ctrl->fb[id]->par;
@@ -253,7 +288,7 @@ static int s3cfb_map_video_memory(struct fb_info *fb)
 		return 0;
 
 	if (pdata && pdata->pmem_start[win->id] &&
-			(pdata->pmem_size[win->id] >= fix->smem_len)) {
+	   (pdata->pmem_size[win->id] >= fix->smem_len)) {
 		fix->smem_start = pdata->pmem_start[win->id];
 		fb->screen_base = ioremap_wc(fix->smem_start, pdata->pmem_size[win->id]);
 	} else
@@ -272,6 +307,12 @@ static int s3cfb_map_video_memory(struct fb_info *fb)
 
 	memset(fb->screen_base, 0, fix->smem_len);
 	win->owner = DMA_MEM_FIMD;
+
+	/*
+	 *  Mark for GetLog (tkhwang)
+	 */
+
+   	frame_buf_mark.p_fb = pdata->pmem_start;
 
 	return 0;
 }
@@ -316,7 +357,7 @@ static int s3cfb_unmap_video_memory(struct fb_info *fb)
 	if (fix->smem_start) {
 		if (win->owner == DMA_MEM_FIMD) {
 			if (pdata && pdata->pmem_start[win->id] &&
-					(pdata->pmem_size[win->id] >= fix->smem_len))
+			   (pdata->pmem_size[win->id] >= fix->smem_len))
 				iounmap(fb->screen_base);
 			else
 				dma_free_writecombine(fbdev->dev, fix->smem_len,
@@ -539,7 +580,6 @@ static int s3cfb_blank(int blank_mode, struct fb_info *fb)
 
 	return 0;
 }
-
 static int s3cfb_pan_display(struct fb_var_screeninfo *var, struct fb_info *fb)
 {
 	struct fb_fix_screeninfo *fix = &fb->fix;
@@ -1010,80 +1050,115 @@ static DEVICE_ATTR(win_power, S_IRUGO | S_IWUSR,
 
 #ifdef DISPLAY_BOOT_PROGRESS
 static void s3cfb_update_framebuffer(struct fb_info *fb,
-									int x, int y, void *buffer,
+									int x, int y, void *buffer, 
 									int src_width, int src_height)
 {
 	struct s3cfb_global *fbdev =
-		platform_get_drvdata(to_platform_device(fb->device));
+			platform_get_drvdata(to_platform_device(fb->device));
 	struct s3c_platform_fb *pdata = to_fb_plat(fbdev->dev);
 	struct fb_fix_screeninfo *fix = &fb->fix;
 	struct fb_var_screeninfo *var = &fb->var;
 	int row;
 	int bytes_per_pixel = (var->bits_per_pixel / 8 );
-
+	
 	unsigned char *pSrc = buffer;
 	unsigned char *pDst = fbdev->fb[pdata->default_win]->screen_base;
 
 	if (x+src_width > var->xres || y+src_height > var->yres)
 	{
-		// err("invalid destination coordinate or source size (%d, %d) (%d %d) \n", x, y, src_width, src_height);
+		dev_err(fbdev->dev,"invalid destination coordinate or source size (%d, %d) (%d %d) \n", x, y, src_width, src_height);
 		return;
-	}
+	}	
 
-	pDst += y * fix->line_length + x * bytes_per_pixel;
+	pDst += y * fix->line_length + x * bytes_per_pixel;	
 
-	for (row = 0; row < src_width ; row++)
-	{
-		memcpy(pDst, pSrc, src_height * bytes_per_pixel);
-		pSrc += src_height * bytes_per_pixel;
+	for (row = 0; row < src_height ; row++)	
+	{		
+		memcpy(pDst, pSrc, src_width * bytes_per_pixel);
+		pSrc += src_width * bytes_per_pixel;
 		pDst += fix->line_length;
 	}
 }
 
 static void s3cfb_start_progress(struct fb_info *fb)
-{
-	init_timer(&progress_timer);
+{	
+	int x_pos;
+	init_timer(&progress_timer);	
+	
+	progress_timer.expires  = (get_jiffies_64() + (HZ/10));	
+	progress_timer.data     = (long)fb;	
+	progress_timer.function = progress_timer_handler;	
+	progress_pos = PROGRESS_BAR_LEFT_POS;	
+	
+	// draw progress background.
+	for (x_pos = PROGRESS_BAR_LEFT_POS ; x_pos <= PROGRESS_BAR_RIGHT_POS ; x_pos += PROGRESS_BAR_WIDTH)
+	{
+		s3cfb_update_framebuffer(fb,
+			x_pos,
+			PROGRESS_BAR_START_Y,
+			(void*)anycall_progress_bar,					
+			PROGRESS_BAR_WIDTH,
+			PROGRESS_BAR_HEIGHT);
+	}
 
-	progress_timer.expires  = (get_jiffies_64() + (HZ/20));
-	progress_timer.data     = (long)fb;
-	progress_timer.function = progress_timer_handler;
-	progress_pos = PROGRESS_BAR_LEFT_POS;
-
-	add_timer(&progress_timer);
-
+	s3cfb_update_framebuffer(fb,
+		PROGRESS_BAR_LEFT_POS,
+		PROGRESS_BAR_START_Y,
+		(void*)anycall_progress_bar_left,					
+		PROGRESS_BAR_WIDTH,
+		PROGRESS_BAR_HEIGHT);
+	
+	progress_pos += PROGRESS_BAR_WIDTH;	
+	
+	s3cfb_update_framebuffer(fb,		
+		progress_pos,
+		PROGRESS_BAR_START_Y,		
+		(void*)anycall_progress_bar_right,				
+		PROGRESS_BAR_WIDTH,
+		PROGRESS_BAR_HEIGHT);
+	
+	add_timer(&progress_timer);	
 	progress_flag = 1;
+
 }
 
 static void s3cfb_stop_progress(void)
-{
-	if (progress_flag == 0)
-		return;
-	del_timer(&progress_timer);
+{	
+	if (progress_flag == 0)		
+		return;	
+	del_timer(&progress_timer);	
 	progress_flag = 0;
 }
 
 static void progress_timer_handler(unsigned long data)
-{
-	int i;
-	for(i = 0; i < 4; i++)
-	{
+{	
+	int i;	
+	for(i = 0; i < 4; i++)	
+	{		
 		s3cfb_update_framebuffer((struct fb_info *)data,
-			PROGRESS_BAR_START_X,
 			progress_pos++,
-			(void*)anycall_progress_bar_center,
+			PROGRESS_BAR_START_Y,
+			(void*)anycall_progress_bar_center,					
 			1,
-			PROGRESS_BAR_HEIGHT);
-	}
-
-	if (progress_pos + PROGRESS_BAR_HEIGHT >= PROGRESS_BAR_RIGHT_POS )
-	{
-		s3cfb_stop_progress();
-	}
-	else
-	{
-		progress_timer.expires = (get_jiffies_64() + (HZ/20));
-		progress_timer.function = progress_timer_handler;
-		add_timer(&progress_timer);
+			PROGRESS_BAR_HEIGHT);	
+	}	
+	
+	s3cfb_update_framebuffer((struct fb_info *)data,		
+		progress_pos,
+		PROGRESS_BAR_START_Y,
+		(void*)anycall_progress_bar_right,		
+		PROGRESS_BAR_WIDTH,
+		PROGRESS_BAR_HEIGHT);    
+	
+	if (progress_pos + PROGRESS_BAR_WIDTH >= PROGRESS_BAR_RIGHT_POS )    
+	{        
+		s3cfb_stop_progress();    
+	}    
+	else    
+	{        
+		progress_timer.expires = (get_jiffies_64() + (HZ/14));         
+		progress_timer.function = progress_timer_handler;         
+		add_timer(&progress_timer);    
 	}
 }
 #endif
@@ -1117,7 +1192,6 @@ static int __devinit s3cfb_probe(struct platform_device *pdev)
 		goto err_regulator;
 	}
 
-#ifdef CONFIG_MACH_ARIES
 	fbdev->vcc_lcd = regulator_get(&pdev->dev, "vcc_lcd");
 	if (!fbdev->vcc_lcd) {
 		dev_err(fbdev->dev, "failed to get vcc_lcd\n");
@@ -1143,7 +1217,6 @@ static int __devinit s3cfb_probe(struct platform_device *pdev)
 		ret = -EINVAL;
 		goto err_vlcd;
 	}
-#endif
 
 	pdata = to_fb_plat(&pdev->dev);
 	if (!pdata) {
@@ -1154,12 +1227,10 @@ static int __devinit s3cfb_probe(struct platform_device *pdev)
 
 	fbdev->lcd = (struct s3cfb_lcd *)pdata->lcd;
 
-#ifdef CONFIG_FB_S3C_CMC623
-	tune_cmc623_set_lcddata(fbdev->lcd);
-#endif
-
+#if ! defined (CONFIG_S5PC110_DEMPSEY_BOARD)
 	if (pdata->cfg_gpio)
 		pdata->cfg_gpio(pdev);
+#endif
 
 	if (pdata->clk_on)
 		pdata->clk_on(pdev, &fbdev->clock);
@@ -1205,10 +1276,13 @@ static int __devinit s3cfb_probe(struct platform_device *pdev)
 		goto err_register;
 	}
 
+	frame_buf_mark.bpp = fbdev->fb[pdata->default_win]->var.bits_per_pixel;
+
+
 	s3cfb_set_clock(fbdev);
 #ifdef CONFIG_FB_S3C_MDNIE
 	mDNIe_Mode_Set();
-#endif
+#endif 
 	s3cfb_set_window(fbdev, pdata->default_win, 1);
 
 	s3cfb_set_alpha_value_width(fbdev, pdata->default_win);
@@ -1224,10 +1298,14 @@ static int __devinit s3cfb_probe(struct platform_device *pdev)
 	}
 
 #ifdef CONFIG_FB_S3C_LCD_INIT
-#if defined(CONFIG_FB_S3C_TL2796)
+#if defined CONFIG_FB_S3C_TL2796 || defined (CONFIG_FB_S3C_uPD161224)
 	if (pdata->backlight_on)
 		pdata->backlight_on(pdev);
 #endif
+/*
+	if (!bootloaderfb && pdata->reset_lcd)
+		pdata->reset_lcd(pdev);
+*/	
 #endif
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
@@ -1241,12 +1319,14 @@ static int __devinit s3cfb_probe(struct platform_device *pdev)
 	if (ret < 0)
 		dev_err(fbdev->dev, "failed to add sysfs entries\n");
 
-	dev_info(fbdev->dev, "registered successfully\n");
-
 #ifdef DISPLAY_BOOT_PROGRESS
-	if(!get_boot_charger_info() && show_progress == 1)
+	if (!(readl(S5P_INFORM5)) && show_progress)
+	{
 		s3cfb_start_progress(fbdev->fb[pdata->default_win]);
+	}
 #endif
+
+	dev_info(fbdev->dev, "registered successfully\n");
 
 	return 0;
 
@@ -1277,14 +1357,12 @@ err_io:
 	pdata->clk_off(pdev, &fbdev->clock);
 
 err_pdata:
-#ifdef CONFIG_MACH_ARIES
 	regulator_disable(fbdev->vlcd);
 
 err_vlcd:
 	regulator_disable(fbdev->vcc_lcd);
 
 err_vcc_lcd:
-#endif
 	regulator_disable(fbdev->regulator);
 
 err_regulator:
@@ -1348,13 +1426,14 @@ void s3cfb_early_suspend(struct early_suspend *h)
 		container_of(h, struct s3cfb_global, early_suspend);
 
 	pr_debug("s3cfb_early_suspend is called\n");
-
-#if defined (CONFIG_FB_S3C_LVDS)
-	lms700_powerdown();
+#if defined (CONFIG_S5PC110_DEMPSEY_BOARD)
+#if defined(CONFIG_FB_S3C_LDI) //Ansari
+        ldi_common_disable();
+        //printk("ANSARI[%s]\n",__func__);
+        //s3c_gpio_setpin(GPIO_MLCD_RST, 1);
+        msleep(150);
+//NAGSM_Android_SEL_Kernel_Aakash_20110120
 #endif
-
-#ifdef CONFIG_FB_S3C_CMC623
-	tune_cmc623_suspend();
 #endif
 
 #ifdef CONFIG_FB_S3C_MDNIE
@@ -1367,15 +1446,13 @@ void s3cfb_early_suspend(struct early_suspend *h)
 	s3cfb_display_off(fbdev);
 #ifdef CONFIG_FB_S3C_MDNIE
 	s3c_mdnie_off();
-#endif
+#endif 
 	clk_disable(fbdev->clock);
-#if defined(CONFIG_FB_S3C_TL2796)
+#if defined CONFIG_FB_S3C_TL2796 || defined (CONFIG_FB_S3C_uPD161224) || defined (CONFIG_FB_S3C_LDI)
 	lcd_cfg_gpio_early_suspend();
 #endif
-#ifdef CONFIG_MACH_ARIES
 	regulator_disable(fbdev->vlcd);
 	regulator_disable(fbdev->vcc_lcd);
-#endif
 	regulator_disable(fbdev->regulator);
 
 	return ;
@@ -1397,7 +1474,6 @@ void s3cfb_late_resume(struct early_suspend *h)
 	if (ret < 0)
 		dev_err(fbdev->dev, "failed to enable regulator\n");
 
-#ifdef CONFIG_MACH_ARIES
 	ret = regulator_enable(fbdev->vcc_lcd);
 	if (ret < 0)
 		dev_err(fbdev->dev, "failed to enable vcc_lcd\n");
@@ -1405,9 +1481,8 @@ void s3cfb_late_resume(struct early_suspend *h)
 	ret = regulator_enable(fbdev->vlcd);
 	if (ret < 0)
 		dev_err(fbdev->dev, "failed to enable vlcd\n");
-#endif
 
-#if defined(CONFIG_FB_S3C_TL2796)
+#if defined CONFIG_FB_S3C_TL2796 || defined (CONFIG_FB_S3C_uPD161224) || defined (CONFIG_FB_S3C_LDI)	
 	lcd_cfg_gpio_late_resume();
 #endif
 	dev_dbg(fbdev->dev, "wake up from suspend\n");
@@ -1425,21 +1500,9 @@ void s3cfb_late_resume(struct early_suspend *h)
 	s3c_mdnie_init_global(fbdev);
 	s3c_mdnie_start(fbdev);
 #endif
-
-#ifdef CONFIG_FB_S3C_CMC623
-	tune_cmc623_pre_resume();
-#endif
 	s3cfb_set_alpha_value_width(fbdev, pdata->default_win);
 
 	s3cfb_display_on(fbdev);
-
-#ifdef CONFIG_FB_S3C_CMC623
-	tune_cmc623_resume();
-#endif
-
-#if defined (CONFIG_FB_S3C_LVDS)
-	lms700_powerup();
-#endif
 
 	for (i = pdata->default_win;
 		i < pdata->nr_wins + pdata->default_win; i++) {
@@ -1460,6 +1523,15 @@ void s3cfb_late_resume(struct early_suspend *h)
 
 	if (pdata->reset_lcd)
 		pdata->reset_lcd(pdev);
+#if defined (CONFIG_S5PC110_DEMPSEY_BOARD)
+#if defined(CONFIG_FB_S3C_LDI) //Ansari
+//      if (pdata->reset_lcd)
+//              pdata->reset_lcd(pdev);
+        ldi_power_on();
+//NAGSM_Android_SEL_Kernel_Aakash_20110120
+#endif
+#endif
+  printk("ANSARI[%s]\n",__func__);
 
 	pr_info("s3cfb_late_resume is complete\n");
 	return ;
@@ -1484,14 +1556,6 @@ static void __exit s3cfb_unregister(void)
 {
 	platform_driver_unregister(&s3cfb_driver);
 }
-
-#ifdef DISPLAY_BOOT_PROGRESS
-static void __init bootmode(char **p)
-{
-	show_progress = simple_strtoul(*p, p, 10);
-}
-//__early_param("bootmode=", bootmode);
-#endif
 
 module_init(s3cfb_register);
 module_exit(s3cfb_unregister);

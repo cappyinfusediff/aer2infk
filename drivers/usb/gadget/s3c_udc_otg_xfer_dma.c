@@ -22,7 +22,8 @@
  */
 
 #define GINTMSK_INIT	(INT_OUT_EP|INT_IN_EP|INT_RESUME|INT_ENUMDONE|INT_RESET|INT_SUSPEND)
-#define DOEPMSK_INIT	(CTRL_OUT_EP_SETUP_PHASE_DONE|AHB_ERROR|TRANSFER_DONE)
+#define DOEPMSK_INIT	(CTRL_OUT_EP_SETUP_PHASE_DONE | AHB_ERROR | BACK2BACK_SETUP_RECEIVED |\
+				TRANSFER_DONE)
 #define DIEPMSK_INIT	(NON_ISO_IN_EP_TIMEOUT|AHB_ERROR|TRANSFER_DONE)
 #define GAHBCFG_INIT	(PTXFE_HALF|NPTXFE_HALF|MODE_DMA|BURST_INCR4|GBL_INT_UNMASK)
 
@@ -85,7 +86,7 @@ static inline void s3c_udc_pre_setup(void)
 
 	DEBUG_IN_EP("%s : Prepare Setup packets.\n", __func__);
 
-	writel((1 << 19)|sizeof(struct usb_ctrlrequest), S3C_UDC_OTG_DOEPTSIZ(EP0_CON));
+	writel((3<<29)| (1<<19) | sizeof(struct usb_ctrlrequest), S3C_UDC_OTG_DOEPTSIZ(EP0_CON));
 	writel(virt_to_phys(&usb_ctrl), S3C_UDC_OTG_DOEPDMA(EP0_CON));
 
 	ep_ctrl = readl(S3C_UDC_OTG_DOEPCTL(EP0_CON));
@@ -154,6 +155,12 @@ static int setdma_tx(struct s3c_ep *ep, struct s3c_request *req)
 		pktcnt = (length - 1)/(ep->ep.maxpacket) + 1;
 
 #ifdef DED_TX_FIFO
+	/* Flush the endpoint's Tx FIFO */
+	writel(ep_num<<6, S3C_UDC_OTG_GRSTCTL);
+	writel((ep_num<<6)|0x20, S3C_UDC_OTG_GRSTCTL);
+	while (readl(S3C_UDC_OTG_GRSTCTL) & 0x20)
+		;
+
 	/* Write the FIFO number to be used for this endpoint */
 	ctrl = readl(S3C_UDC_OTG_DIEPCTL(ep_num));
 	ctrl &= ~DEPCTL_TXFNUM_MASK;;
@@ -164,9 +171,13 @@ static int setdma_tx(struct s3c_ep *ep, struct s3c_request *req)
 	writel(virt_to_phys(buf), S3C_UDC_OTG_DIEPDMA(ep_num));
 	writel((pktcnt<<19)|(length<<0), S3C_UDC_OTG_DIEPTSIZ(ep_num));
 	ctrl = readl(S3C_UDC_OTG_DIEPCTL(ep_num));
-	if (ep->bmAttributes == USB_ENDPOINT_XFER_ISOC)
-		ctrl |= DEPCTL_SET_ODD_FRM;
 	writel(DEPCTL_EPENA|DEPCTL_CNAK|ctrl, S3C_UDC_OTG_DIEPCTL(ep_num));
+
+#ifndef DED_TX_FIFO
+	ctrl = readl(S3C_UDC_OTG_DIEPCTL(EP0_CON));
+	ctrl = (ctrl&~(EP_MASK<<DEPCTL_NEXT_EP_BIT))|(ep_num<<DEPCTL_NEXT_EP_BIT);
+	writel(ctrl, S3C_UDC_OTG_DIEPCTL(EP0_CON));
+#endif
 
 	DEBUG_IN_EP("%s:EP%d TX DMA start : DIEPDMA0 = 0x%x, DIEPTSIZ0 = 0x%x, DIEPCTL0 = 0x%x\n"
 			"\tbuf = 0x%p, pktcnt = %d, xfersize = %d\n",
@@ -276,6 +287,13 @@ static void complete_tx(struct s3c_udc *dev, u8 ep_num)
 		is_short, ep_tsr, xfer_size);
 
 	if (req->req.actual == req->req.length) {
+               /* send ZLP when req.zero is set for Non-ep0 */
+               if (ep_num > 0 && req->req.zero) {
+                       req->req.zero = 0;
+                       write_fifo_ep0(ep, req);
+                       return;
+               }
+
 		done(ep, req, 0);
 
 		if (!list_empty(&ep->queue)) {
@@ -351,7 +369,7 @@ static void process_ep_in_intr(struct s3c_udc *dev)
 
 static void process_ep_out_intr(struct s3c_udc *dev)
 {
-	u32 ep_intr, ep_intr_status, ep_ctrl;
+	u32 ep_intr, ep_intr_status;
 	u8 ep_num = 0;
 
 	ep_intr = readl(S3C_UDC_OTG_DAINT);
@@ -370,22 +388,33 @@ static void process_ep_out_intr(struct s3c_udc *dev)
 			writel(ep_intr_status, S3C_UDC_OTG_DOEPINT(ep_num));
 
 			if (ep_num == 0) {
-				if (ep_intr_status & CTRL_OUT_EP_SETUP_PHASE_DONE) {
-					DEBUG_OUT_EP("\tSETUP packet(transaction) arrived\n");
+				if (ep_intr_status &
+					CTRL_OUT_EP_SETUP_PHASE_DONE) {
+					DEBUG_OUT_EP("\tSETUP"
+						"packet(transaction)"
+						"arrived\n");
+					if (likely((ep_intr_status & BACK2BACK_SETUP_RECEIVED)==0)) {
+						if(((__raw_readl(S3C_UDC_OTG_DOEPTSIZ(0))>>29)&0x3) < 2) {
+							/* Got more than 1 setup packets */
+							/* Get the last valid setup packet (next setup pkt)*/
+							s3c_udc_pre_setup();
+							printk(KERN_DEBUG "b2bs\n");
+							continue;
+						}
+					}
 					s3c_handle_ep0(dev);
 				}
 
 				if (ep_intr_status & TRANSFER_DONE) {
 					complete_rx(dev, ep_num);
+//					s3c_udc_pre_setup();
 
-					writel((3<<29)|(1<<19)|sizeof(struct usb_ctrlrequest),
-						S3C_UDC_OTG_DOEPTSIZ(EP0_CON));
-					writel(virt_to_phys(&usb_ctrl),
-						S3C_UDC_OTG_DOEPDMA(EP0_CON));
-
-					ep_ctrl = readl(S3C_UDC_OTG_DOEPCTL(EP0_CON));
-					writel(ep_ctrl|DEPCTL_EPENA|DEPCTL_SNAK,
-						S3C_UDC_OTG_DOEPCTL(EP0_CON));
+					 u32 ep_ctrl;
+					 writel((3<<29)|(1 << 19)|sizeof(struct usb_ctrlrequest), S3C_UDC_OTG_DOEPTSIZ(EP0_CON));
+					 writel(virt_to_phys(&usb_ctrl), S3C_UDC_OTG_DOEPDMA(EP0_CON));
+    
+					 ep_ctrl = readl(S3C_UDC_OTG_DOEPCTL(EP0_CON));
+					 writel(ep_ctrl|DEPCTL_EPENA|DEPCTL_SNAK, S3C_UDC_OTG_DOEPCTL(EP0_CON));  
 				}
 
 			} else {
@@ -498,15 +527,8 @@ static irqreturn_t s3c_udc_irq(int irq, void *_dev)
 				reset_available = 0;
 				s3c_udc_pre_setup();
 			}
-		} else if (!(usb_status & B_SESSION_VALID)) {
-			reset_available = 1;
-			if (dev->udc_enabled) {
-				DEBUG_ISR("Reset without B_SESSION\n");
-				if (dev->driver) {
-					spin_unlock(&dev->lock);
-					dev->driver->disconnect(&dev->gadget);
-					spin_lock(&dev->lock);
-				}
+                        else {
+                            reset_available = 1;
 			}
 		} else {
 			reset_available = 1;
@@ -1138,7 +1160,7 @@ static int s3c_udc_set_feature(struct usb_ep *_ep)
 	DEBUG_SETUP("%s: *** USB_REQ_SET_FEATURE , ep_num = %d\n", __func__, ep_num);
 
 	if (usb_ctrl.wLength != 0) {
-		DEBUG_SETUP("\tSET_FEATURE: wLength is not zero.....\n");
+		//DEBUG_SETUP("\tSET_FEATURE: wLength is not zero.....\n");
 		return 1;
 	}
 
@@ -1147,27 +1169,27 @@ static int s3c_udc_set_feature(struct usb_ep *_ep)
 		switch (usb_ctrl.wValue) {
 		case USB_DEVICE_REMOTE_WAKEUP:
 			DEBUG_SETUP("\tSET_FEATURE: USB_DEVICE_REMOTE_WAKEUP\n");
-			printk(KERN_INFO "%s:: USB_DEVICE_REMOTE_WAKEUP\n", __func__);
+			//printk(KERN_INFO "%s:: USB_DEVICE_REMOTE_WAKEUP\n", __func__);
 			dev->status |= (1 << USB_DEVICE_REMOTE_WAKEUP);
 			break;
 
 		case USB_DEVICE_TEST_MODE:
-			DEBUG_SETUP("\tSET_FEATURE: USB_DEVICE_TEST_MODE\n");
+			//DEBUG_SETUP("\tSET_FEATURE: USB_DEVICE_TEST_MODE\n");
 			set_test_mode();
 			break;
 
 		case USB_DEVICE_B_HNP_ENABLE:
-			DEBUG_SETUP("\tSET_FEATURE: USB_DEVICE_B_HNP_ENABLE\n");
+			//DEBUG_SETUP("\tSET_FEATURE: USB_DEVICE_B_HNP_ENABLE\n");
 			break;
 
 		case USB_DEVICE_A_HNP_SUPPORT:
 			/* RH port supports HNP */
-			DEBUG_SETUP("\tSET_FEATURE: USB_DEVICE_A_HNP_SUPPORT\n");
+			//DEBUG_SETUP("\tSET_FEATURE: USB_DEVICE_A_HNP_SUPPORT\n");
 			break;
 
 		case USB_DEVICE_A_ALT_HNP_SUPPORT:
 			/* other RH port does */
-			DEBUG_SETUP("\tSET_FEATURE: USB_DEVICE_A_ALT_HNP_SUPPORT\n");
+			//DEBUG_SETUP("\tSET_FEATURE: USB_DEVICE_A_ALT_HNP_SUPPORT\n");
 			break;
 		}
 

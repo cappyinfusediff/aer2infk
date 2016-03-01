@@ -47,7 +47,7 @@ struct idletimer_tg_info {
 	__u8 send_nl_msg;
 
 	/* for kernel module internal use only */
-	struct idletimer_tg *timer __attribute__((aligned(8)));
+	struct idletimer_tg *timer __attribute((aligned(8)));
 };
 
 #endif

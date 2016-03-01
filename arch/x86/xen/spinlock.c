@@ -159,8 +159,8 @@ static inline struct xen_spinlock *spinning_lock(struct xen_spinlock *xl)
 {
 	struct xen_spinlock *prev;
 
-	prev = __this_cpu_read(lock_spinners);
-	__this_cpu_write(lock_spinners, xl);
+	prev = __get_cpu_var(lock_spinners);
+	__get_cpu_var(lock_spinners) = xl;
 
 	wmb();			/* set lock of interest before count */
 
@@ -179,14 +179,14 @@ static inline void unspinning_lock(struct xen_spinlock *xl, struct xen_spinlock 
 	asm(LOCK_PREFIX " decw %0"
 	    : "+m" (xl->spinners) : : "memory");
 	wmb();			/* decrement count before restoring lock */
-	__this_cpu_write(lock_spinners, prev);
+	__get_cpu_var(lock_spinners) = prev;
 }
 
 static noinline int xen_spin_lock_slow(struct arch_spinlock *lock, bool irq_enable)
 {
 	struct xen_spinlock *xl = (struct xen_spinlock *)lock;
 	struct xen_spinlock *prev;
-	int irq = __this_cpu_read(lock_kicker_irq);
+	int irq = __get_cpu_var(lock_kicker_irq);
 	int ret;
 	u64 start;
 
@@ -224,7 +224,7 @@ static noinline int xen_spin_lock_slow(struct arch_spinlock *lock, bool irq_enab
 			goto out;
 		}
 
-		flags = arch_local_save_flags();
+		flags = __raw_local_save_flags();
 		if (irq_enable) {
 			ADD_STATS(taken_slow_irqenable, 1);
 			raw_local_irq_enable();
@@ -313,6 +313,7 @@ static noinline void xen_spin_unlock_slow(struct xen_spinlock *xl)
 		if (per_cpu(lock_spinners, cpu) == xl) {
 			ADD_STATS(released_slow_kicked, 1);
 			xen_send_IPI_one(cpu, XEN_SPIN_UNLOCK_VECTOR);
+			break;
 		}
 	}
 }

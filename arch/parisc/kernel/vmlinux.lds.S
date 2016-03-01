@@ -50,10 +50,8 @@ SECTIONS
 	. = KERNEL_BINARY_TEXT_START;
 
 	_text = .;		/* Text and read-only data */
-	.head ALIGN(16) : {
-		HEAD_TEXT
-	} = 0
 	.text ALIGN(16) : {
+		HEAD_TEXT
 		TEXT_TEXT
 		SCHED_TEXT
 		LOCK_TEXT
@@ -67,12 +65,9 @@ SECTIONS
 		*(.fixup)
 		*(.lock.text)		/* out-of-line lock text */
 		*(.gnu.warning)
-	}
+	} = 0
 	/* End of text section */
 	_etext = .;
-
-	/* Start of data section */
-	_sdata = .;
 
 	RODATA
 
@@ -139,7 +134,6 @@ SECTIONS
 	. = ALIGN(16384);
 	__init_begin = .;
 	INIT_TEXT_SECTION(16384)
-	. = ALIGN(PAGE_SIZE);
 	INIT_DATA_SECTION(16)
 	/* we have to discard exit text and such at runtime, not link time */
 	.exit.text :
@@ -151,7 +145,7 @@ SECTIONS
 		EXIT_DATA
 	}
 
-	PERCPU_SECTION(L1_CACHE_BYTES)
+	PERCPU(PAGE_SIZE)
 	. = ALIGN(PAGE_SIZE);
 	__init_end = .;
 	/* freed after init ends here */

@@ -13,7 +13,6 @@
 
 #include <linux/fs.h>
 #include <linux/init.h>
-#include <linux/compat.h>
 #include <linux/kernel.h>
 #include <linux/miscdevice.h>
 #include <linux/slab.h>
@@ -48,7 +47,7 @@ static int vmcp_release(struct inode *inode, struct file *file)
 {
 	struct vmcp_session *session;
 
-	session = file->private_data;
+	session = (struct vmcp_session *)file->private_data;
 	file->private_data = NULL;
 	free_pages((unsigned long)session->response, get_order(session->bufsize));
 	kfree(session);
@@ -95,7 +94,7 @@ vmcp_write(struct file *file, const char __user *buff, size_t count,
 		return -EFAULT;
 	}
 	cmd[count] = '\0';
-	session = file->private_data;
+	session = (struct vmcp_session *)file->private_data;
 	if (mutex_lock_interruptible(&session->mutex)) {
 		kfree(cmd);
 		return -ERESTARTSYS;
@@ -137,7 +136,7 @@ static long vmcp_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	int __user *argp;
 	int temp;
 
-	session = file->private_data;
+	session = (struct vmcp_session *)file->private_data;
 	if (is_compat_task())
 		argp = compat_ptr(arg);
 	else
@@ -178,7 +177,6 @@ static const struct file_operations vmcp_fops = {
 	.write		= vmcp_write,
 	.unlocked_ioctl	= vmcp_ioctl,
 	.compat_ioctl	= vmcp_ioctl,
-	.llseek		= no_llseek,
 };
 
 static struct miscdevice vmcp_dev = {

@@ -40,14 +40,7 @@
 
 #include "../onedram/onedram.h"
 
-#if defined(CONFIG_KERNEL_DEBUG_SEC)
-#include <linux/kernel_sec_common.h>
-#define ERRMSG "Unknown CP Crash"
-static char cp_errmsg[65];
-static void _go_dump(struct sipc *si);
-#else
 #define _go_dump(si) do { } while(0)
-#endif
 
 #if defined(NOISY_DEBUG)
 static struct device *_dev;
@@ -250,6 +243,15 @@ static const struct attribute_group pdp_group = {
 	.attrs = pdp_attributes,
 };
 
+#if defined (CONFIG_CP_CHIPSET_STE) 
+//#define STE_SWWORKAROUND_MCLKREQ_TIMMING
+#endif
+
+#if defined (STE_SWWORKAROUND_MCLKREQ_TIMMING)
+static void do_command_onedram_write_mailbox_wq(struct work_struct *work);
+static DECLARE_WORK(onedram_write_mailbox_work, do_command_onedram_write_mailbox_wq);
+#endif
+
 
 #if defined(NOISY_DEBUG)
 #define DUMP_LIMIT 32
@@ -308,6 +310,20 @@ static int _get_auth(void)
 	return r;
 }
 
+#if defined (CONFIG_CP_CHIPSET_STE)
+static void _put_auth(struct sipc *si, u32 mailbox)
+{
+	if (!si)
+		return;
+
+	onedram_put_auth(0);
+
+	if (!onedram_rel_sem()) {
+		if (mailbox == 0)
+			onedram_write_mailbox(MB_CMD(MBC_RES_SEM));
+	}
+}
+#else
 static void _put_auth(struct sipc *si)
 {
 	if (!si)
@@ -320,6 +336,7 @@ static void _put_auth(struct sipc *si)
 		si->od_rel = 0;
 	}
 }
+#endif
 
 static inline void _req_rel_auth(struct sipc *si)
 {
@@ -358,11 +375,24 @@ static void _check_buffer(struct sipc *si)
 
 		mailbox |= mb_data[i].mask_send;
 	}
+#if defined (CONFIG_CP_CHIPSET_STE)
+	_put_auth(si, 0);
+#else
 	_put_auth(si);
+#endif
 
 	if (mailbox)
 		si->queue(MB_DATA(mailbox), si->queue_data);
 }
+
+#if defined (STE_SWWORKAROUND_MCLKREQ_TIMMING)
+static void do_command_onedram_write_mailbox_wq(struct work_struct *work)
+{
+	int r; 
+	r = onedram_write_mailbox(MB_CMD(MBC_RES_SEM));
+	printk("do_command_onedram_write_mailbox_wq = [%d]\n", r);
+}
+#endif
 
 static void _do_command(struct sipc *si, u32 mailbox)
 {
@@ -414,20 +444,15 @@ void sipc_handler(u32 mailbox, void *data)
 
 	dev_dbg(&si->svndev->dev, "recv mailbox %x\n", mailbox);
 
-#if defined(CONFIG_KERNEL_DEBUG_SEC)
-	if (mailbox == KERNEL_SEC_DUMP_AP_DEAD_ACK) {
-		// deal ack for ap crash that indicated to cp
-		kernel_sec_set_cp_ack();
-	}
-#endif
-
 	if ((mailbox & MB_VALID) == 0) {
 		dev_err(&si->svndev->dev, "Invalid mailbox message: %x\n", mailbox);
 		return;
 	}
 
 	if (mailbox & MB_COMMAND) {
+	#if (!defined CONFIG_CP_CHIPSET_STE) || (defined(CONFIG_S5PC110_DEMPSEY_BOARD))
 		_check_buffer(si);  // check buffer for missing interrupt
+	#endif
 		_do_command(si, mailbox);
 		return;
 	}
@@ -440,7 +465,18 @@ static inline void _init_data(struct sipc *si, unsigned char *base)
 	int i;
 
 	si->map = (struct sipc_mapped *)base;
+	#if defined (CONFIG_CP_CHIPSET_STE)  
+	if(si->map->magic == 0xFF)
+	{
+		si->map->magic = 0x0;
+	}
+	else
+	{
+		si->map->magic = 0xFF;
+	}
+	#else
 	si->map->magic = 0x0;
+	#endif
 	si->map->access = 0x0;
 	si->map->hwrev = HWREV;
 
@@ -453,11 +489,21 @@ static inline void _init_data(struct sipc *si, unsigned char *base)
 		r->in_base = base + info->in_off;
 		r->info = info;
 		r->cont = cont;
-
+		
+		#if defined (CONFIG_CP_CHIPSET_STE)  
+		if(si->map->magic == 0xFF)
+		{
+			cont->out_head = 0;
+			cont->out_tail = 0;
+			cont->in_head = 0;
+			cont->in_tail = 0;
+		}
+		#else
 		cont->out_head = 0;
 		cont->out_tail = 0;
 		cont->in_head = 0;
 		cont->in_tail = 0;
+		#endif
 	}
 }
 
@@ -919,7 +965,17 @@ int sipc_write(struct sipc *si, struct sk_buff_head *sbh)
 		skb_queue_purge(sbh);
 		return -ENXIO;
 	}
+#if defined (CONFIG_CP_CHIPSET_STE)  
+	skb = skb_dequeue(sbh);
+	if ( !skb )
+		return 0;
 
+	r = _get_auth();
+	if (r)
+		return r;
+
+	r = mailbox = 0;
+#else
 	r = _get_auth();
 	if (r) {
 		if (factory_test_force_sleep){
@@ -933,6 +989,7 @@ int sipc_write(struct sipc *si, struct sk_buff_head *sbh)
 
 	r = mailbox = 0;
 	skb = skb_dequeue(sbh);
+#endif
 	while (skb) {
 		struct net_device *ndev = skb->dev;
 		int len = skb->len;
@@ -955,11 +1012,18 @@ int sipc_write(struct sipc *si, struct sk_buff_head *sbh)
 		skb = skb_dequeue(sbh);
 	}
 
+#if defined (CONFIG_CP_CHIPSET_STE)
+//	_req_rel_auth(si);
+	_put_auth(si, mailbox);
+#else
 	_req_rel_auth(si);
 	_put_auth(si);
+#endif
 
 	if(mailbox)
+	{
 		onedram_write_mailbox(MB_DATA(mailbox));
+	}
 
 	if (r < 0) {
 		if (r == -ENOSPC) {
@@ -1595,10 +1659,14 @@ int sipc_read(struct sipc *si, u32 mailbox, int *cond)
 		if (!inbuf)
 			continue;
 
+#if defined (CONFIG_CP_CHIPSET_STE)
+
+#else
 		if (i == IPCIDX_FMT)
 			_fmt_wakelock_timeout();
 		else
 			_non_fmt_wakelock_timeout();			
+#endif
 
 		_dbg("%s: %d bytes in %d\n", __func__, inbuf, i);
 
@@ -1610,19 +1678,25 @@ int sipc_read(struct sipc *si, u32 mailbox, int *cond)
 			dev_err(&si->svndev->dev, "read err %d\n", r);
 			break;
 		}
-
+#if defined (CONFIG_CP_CHIPSET_STE)
+#else
 		if (mailbox & mb_data[i].mask_req_ack)
 			res = mb_data[i].mask_res_ack;
+#endif
 	}
 
-#if !defined(CONFIG_ARIES_NTT)
-	_req_rel_auth(si);
-#endif
 
+#if defined (CONFIG_CP_CHIPSET_STE) 
+//	_req_rel_auth(si); 
+	onedram_put_auth(0);
+//	onedram_rel_sem();
+#else
+	_req_rel_auth(si);
 	_put_auth(si);
 
 	if (res)
 		onedram_write_mailbox(MB_DATA(res));
+#endif
 
 	*cond =	skb_queue_len(&si->rfs_rx);
 
@@ -1677,7 +1751,11 @@ static inline ssize_t _debug_show_buf(struct sipc *si, char *buf)
 				rb->rb_in_head, rb->rb_in_tail, inbuf,
 				rb->rb_out_head, rb->rb_out_tail, outbuf);
 	}
+#if defined (CONFIG_CP_CHIPSET_STE)
+	_put_auth(si, 0);
+#else
 	_put_auth(si);
+#endif
 
 	return p - buf;
 }
@@ -1757,8 +1835,11 @@ int sipc_debug(struct sipc *si, const char *buf)
 		/* do nothing */
 		break;
 	}
+#if defined (CONFIG_CP_CHIPSET_STE)
+	_put_auth(si, 0);
+#else
 	_put_auth(si);
-
+#endif
 	return 0;
 }
 
@@ -1787,7 +1868,11 @@ int sipc_whitelist(struct sipc *si, const char *buf, size_t count)
 	r =  __write(rb,(u8 *) buf, (unsigned int )count);
 
 	_req_rel_auth(si);
+#if defined (CONFIG_CP_CHIPSET_STE)
+	_put_auth(si, 0);
+#else
 	_put_auth(si);
+#endif
 
 	onedram_write_mailbox(MB_DATA(mb_data[IPCIDX_FMT].mask_send));
 	return r;
@@ -2031,39 +2116,6 @@ static ssize_t store_resume(struct device *d,
 
 void sipc_ramdump(struct sipc *si)
 {
-#if defined(CONFIG_KERNEL_DEBUG_SEC)
-	/* silent reset at debug level low */
-	if ( kernel_sec_get_debug_level() == KERNEL_SEC_DEBUG_LEVEL_LOW )
-		return;
-#endif
 	_go_dump(si);
 }
 
-#if defined(CONFIG_KERNEL_DEBUG_SEC)
-static void _go_dump(struct sipc *si)
-{
-	int r;
-	t_kernel_sec_mmu_info mmu_info;
-
-	memset(cp_errmsg, 0, sizeof(cp_errmsg));
-
-	r = _get_auth();
-	if (r)
-		strcpy(cp_errmsg, ERRMSG);
-	else {
-		char *p;
-		p = (char *)si->map + FATAL_DISP;
-		memcpy(cp_errmsg, p, sizeof(cp_errmsg));
-	}
-
-	printk("CP Dump Cause - %s\n", cp_errmsg);
-
-//	kernel_sec_set_cause_strptr(cp_errmsg, sizeof(cp_errmsg));
-	kernel_sec_set_upload_magic_number();
-	kernel_sec_get_mmu_reg_dump(&mmu_info);
-	kernel_sec_set_upload_cause(UPLOAD_CAUSE_CP_ERROR_FATAL);
-	kernel_sec_hw_reset(false);
-
-	// Never Return!!!
-}
-#endif

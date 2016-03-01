@@ -20,6 +20,11 @@
 #define PLL45XX_SDIV_SHIFT	(0)
 
 #include <asm/div64.h>
+#define PLL45XX_APLL_VAL_1600  ((1 << 31) | (200 << 16) | (3 << 8) | (1))
+#define PLL45XX_APLL_VAL_1400  ((1 << 31) | (175 << 16) | (3 << 8) | (1))
+#define PLL45XX_APLL_VAL_1200	((1 << 31) | (150 << 16) | (3 << 8) | (1))
+#define PLL45XX_APLL_VAL_1000	((1 << 31) | (125 << 16) | (3 << 8) | (1))
+#define PLL45XX_APLL_VAL_800	((1 << 31) | (100 << 16) | (3 << 8) | (1))
 
 enum pll45xx_type_t {
 	pll_4500,
@@ -47,7 +52,6 @@ static inline unsigned long s5p_get_pll45xx(unsigned long baseclk, u32 pll_con,
 }
 
 #define PLL46XX_KDIV_MASK	(0xFFFF)
-#define PLL4650C_KDIV_MASK	(0xFFF)
 #define PLL46XX_MDIV_MASK	(0x1FF)
 #define PLL46XX_PDIV_MASK	(0x3F)
 #define PLL46XX_SDIV_MASK	(0x7)
@@ -58,7 +62,6 @@ static inline unsigned long s5p_get_pll45xx(unsigned long baseclk, u32 pll_con,
 enum pll46xx_type_t {
 	pll_4600,
 	pll_4650,
-	pll_4650c,
 };
 
 static inline unsigned long s5p_get_pll46xx(unsigned long baseclk,
@@ -73,11 +76,6 @@ static inline unsigned long s5p_get_pll46xx(unsigned long baseclk,
 	pdiv = (pll_con0 >> PLL46XX_PDIV_SHIFT) & PLL46XX_PDIV_MASK;
 	sdiv = (pll_con0 >> PLL46XX_SDIV_SHIFT) & PLL46XX_SDIV_MASK;
 	kdiv = pll_con1 & PLL46XX_KDIV_MASK;
-
-	if (pll_type == pll_4650c)
-		kdiv = pll_con1 & PLL4650C_KDIV_MASK;
-	else
-		kdiv = pll_con1 & PLL46XX_KDIV_MASK;
 
 	tmp = baseclk;
 

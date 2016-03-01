@@ -1,6 +1,6 @@
 /****************************************************************************
  * Driver for Solarflare Solarstorm network controllers and boards
- * Copyright 2009-2010 Solarflare Communications Inc.
+ * Copyright 2009 Solarflare Communications Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 as published
@@ -13,7 +13,7 @@
 #include "mcdi.h"
 #include "mcdi_pcol.h"
 
-int efx_mcdi_set_mac(struct efx_nic *efx)
+static int efx_mcdi_set_mac(struct efx_nic *efx)
 {
 	u32 reject, fcntl;
 	u8 cmdbytes[MC_CMD_SET_MAC_IN_LEN];
@@ -45,8 +45,6 @@ int efx_mcdi_set_mac(struct efx_nic *efx)
 	}
 	if (efx->wanted_fc & EFX_FC_AUTO)
 		fcntl = MC_CMD_FCNTL_AUTO;
-	if (efx->fc_disable)
-		fcntl = MC_CMD_FCNTL_OFF;
 
 	MCDI_SET_DWORD(cmdbytes, SET_MAC_IN_FCNTL, fcntl);
 
@@ -71,8 +69,8 @@ static int efx_mcdi_get_mac_faults(struct efx_nic *efx, u32 *faults)
 	return 0;
 
 fail:
-	netif_err(efx, hw, efx->net_dev, "%s: failed rc=%d\n",
-		  __func__, rc);
+	EFX_ERR(efx, "%s: failed rc=%d\n",
+		__func__, rc);
 	return rc;
 }
 
@@ -112,8 +110,8 @@ int efx_mcdi_mac_stats(struct efx_nic *efx, dma_addr_t dma_addr,
 	return 0;
 
 fail:
-	netif_err(efx, hw, efx->net_dev, "%s: %s failed rc=%d\n",
-		  __func__, enable ? "enable" : "disable", rc);
+	EFX_ERR(efx, "%s: %s failed rc=%d\n",
+		__func__, enable ? "enable" : "disable", rc);
 	return rc;
 }
 
@@ -140,7 +138,7 @@ static bool efx_mcdi_mac_check_fault(struct efx_nic *efx)
 }
 
 
-const struct efx_mac_operations efx_mcdi_mac_operations = {
+struct efx_mac_operations efx_mcdi_mac_operations = {
 	.reconfigure	= efx_mcdi_mac_reconfigure,
 	.update_stats	= efx_port_dummy_op_void,
 	.check_fault 	= efx_mcdi_mac_check_fault,

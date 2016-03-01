@@ -17,10 +17,6 @@
 
 #include <net/ip.h>
 #include <net/sock.h>
-#include <net/net_ratelimit.h>
-
-static int zero = 0;
-static int ushort_max = USHRT_MAX;
 
 #ifdef CONFIG_RPS
 static int rps_sock_flow_sysctl(ctl_table *table, int write,
@@ -38,8 +34,7 @@ static int rps_sock_flow_sysctl(ctl_table *table, int write,
 
 	mutex_lock(&sock_flow_mutex);
 
-	orig_sock_table = rcu_dereference_protected(rps_sock_flow_table,
-					lockdep_is_held(&sock_flow_mutex));
+	orig_sock_table = rps_sock_flow_table;
 	size = orig_size = orig_sock_table ? orig_sock_table->mask + 1 : 0;
 
 	ret = proc_dointvec(&tmp, write, buffer, lenp, ppos);
@@ -126,15 +121,6 @@ static struct ctl_table net_core_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec
 	},
-#ifdef CONFIG_BPF_JIT
-	{
-		.procname	= "bpf_jit_enable",
-		.data		= &bpf_jit_enable,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec
-	},
-#endif
 	{
 		.procname	= "netdev_tstamp_prequeue",
 		.data		= &netdev_tstamp_prequeue,
@@ -195,9 +181,7 @@ static struct ctl_table netns_core_table[] = {
 		.data		= &init_net.core.sysctl_somaxconn,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.extra1		= &zero,
-		.extra2		= &ushort_max,
-		.proc_handler	= proc_dointvec_minmax
+		.proc_handler	= proc_dointvec
 	},
 	{ }
 };

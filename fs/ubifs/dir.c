@@ -355,50 +355,31 @@ static unsigned int vfs_dent_type(uint8_t type)
 static int ubifs_readdir(struct file *file, void *dirent, filldir_t filldir)
 {
 	int err, over = 0;
-	loff_t pos = file->f_pos;
 	struct qstr nm;
 	union ubifs_key key;
 	struct ubifs_dent_node *dent;
 	struct inode *dir = file->f_path.dentry->d_inode;
 	struct ubifs_info *c = dir->i_sb->s_fs_info;
 
-	dbg_gen("dir ino %lu, f_pos %#llx", dir->i_ino, pos);
+	dbg_gen("dir ino %lu, f_pos %#llx", dir->i_ino, file->f_pos);
 
-	if (pos > UBIFS_S_KEY_HASH_MASK || pos == 2)
+	if (file->f_pos > UBIFS_S_KEY_HASH_MASK || file->f_pos == 2)
 		/*
 		 * The directory was seek'ed to a senseless position or there
 		 * are no more entries.
 		 */
 		return 0;
 
-	if (file->f_version == 0) {
-		/*
-		 * The file was seek'ed, which means that @file->private_data
-		 * is now invalid. This may also be just the first
-		 * 'ubifs_readdir()' invocation, in which case
-		 * @file->private_data is NULL, and the below code is
-		 * basically a no-op.
-		 */
-		kfree(file->private_data);
-		file->private_data = NULL;
-	}
-
-	/*
-	 * 'generic_file_llseek()' unconditionally sets @file->f_version to
-	 * zero, and we use this for detecting whether the file was seek'ed.
-	 */
-	file->f_version = 1;
-
 	/* File positions 0 and 1 correspond to "." and ".." */
-	if (pos == 0) {
+	if (file->f_pos == 0) {
 		ubifs_assert(!file->private_data);
 		over = filldir(dirent, ".", 1, 0, dir->i_ino, DT_DIR);
 		if (over)
 			return 0;
-		file->f_pos = pos = 1;
+		file->f_pos = 1;
 	}
 
-	if (pos == 1) {
+	if (file->f_pos == 1) {
 		ubifs_assert(!file->private_data);
 		over = filldir(dirent, "..", 2, 1,
 			       parent_ino(file->f_path.dentry), DT_DIR);
@@ -414,7 +395,7 @@ static int ubifs_readdir(struct file *file, void *dirent, filldir_t filldir)
 			goto out;
 		}
 
-		file->f_pos = pos = key_hash_flash(c, &dent->key);
+		file->f_pos = key_hash_flash(c, &dent->key);
 		file->private_data = dent;
 	}
 
@@ -422,16 +403,17 @@ static int ubifs_readdir(struct file *file, void *dirent, filldir_t filldir)
 	if (!dent) {
 		/*
 		 * The directory was seek'ed to and is now readdir'ed.
-		 * Find the entry corresponding to @pos or the closest one.
+		 * Find the entry corresponding to @file->f_pos or the
+		 * closest one.
 		 */
-		dent_key_init_hash(c, &key, dir->i_ino, pos);
+		dent_key_init_hash(c, &key, dir->i_ino, file->f_pos);
 		nm.name = NULL;
 		dent = ubifs_tnc_next_ent(c, &key, &nm);
 		if (IS_ERR(dent)) {
 			err = PTR_ERR(dent);
 			goto out;
 		}
-		file->f_pos = pos = key_hash_flash(c, &dent->key);
+		file->f_pos = key_hash_flash(c, &dent->key);
 		file->private_data = dent;
 	}
 
@@ -443,7 +425,7 @@ static int ubifs_readdir(struct file *file, void *dirent, filldir_t filldir)
 			     ubifs_inode(dir)->creat_sqnum);
 
 		nm.len = le16_to_cpu(dent->nlen);
-		over = filldir(dirent, dent->name, nm.len, pos,
+		over = filldir(dirent, dent->name, nm.len, file->f_pos,
 			       le64_to_cpu(dent->inum),
 			       vfs_dent_type(dent->type));
 		if (over)
@@ -459,17 +441,9 @@ static int ubifs_readdir(struct file *file, void *dirent, filldir_t filldir)
 		}
 
 		kfree(file->private_data);
-		file->f_pos = pos = key_hash_flash(c, &dent->key);
+		file->f_pos = key_hash_flash(c, &dent->key);
 		file->private_data = dent;
 		cond_resched();
-
-		if (file->f_version == 0)
-			/*
-			 * The file was seek'ed meanwhile, lets return and start
-			 * reading direntries from the new position on the next
-			 * invocation.
-			 */
-			return 0;
 	}
 
 out:
@@ -480,13 +454,15 @@ out:
 
 	kfree(file->private_data);
 	file->private_data = NULL;
-	/* 2 is a special value indicating that there are no more direntries */
 	file->f_pos = 2;
 	return 0;
 }
 
+/* If a directory is seeked, we have to free saved readdir() state */
 static loff_t ubifs_dir_llseek(struct file *file, loff_t offset, int origin)
 {
+	kfree(file->private_data);
+	file->private_data = NULL;
 	return generic_file_llseek(file, offset, origin);
 }
 
@@ -546,6 +522,24 @@ static int ubifs_link(struct dentry *old_dentry, struct inode *dir,
 	ubifs_assert(mutex_is_locked(&dir->i_mutex));
 	ubifs_assert(mutex_is_locked(&inode->i_mutex));
 
+	/*
+	 * Return -ENOENT if we've raced with unlink and i_nlink is 0.  Doing
+	 * otherwise has the potential to corrupt the orphan inode list.
+	 *
+	 * Indeed, consider a scenario when 'vfs_link(dirA/fileA)' and
+	 * 'vfs_unlink(dirA/fileA, dirB/fileB)' race. 'vfs_link()' does not
+	 * lock 'dirA->i_mutex', so this is possible. Both of the functions
+	 * lock 'fileA->i_mutex' though. Suppose 'vfs_unlink()' wins, and takes
+	 * 'fileA->i_mutex' mutex first. Suppose 'fileA->i_nlink' is 1. In this
+	 * case 'ubifs_unlink()' will drop the last reference, and put 'inodeA'
+	 * to the list of orphans. After this, 'vfs_link()' will link
+	 * 'dirB/fileB' to 'inodeA'. This is a problem because, for example,
+	 * the subsequent 'vfs_unlink(dirB/fileB)' will add the same inode
+	 * to the list of orphans.
+	 */
+	 if (inode->i_nlink == 0)
+		 return -ENOENT;
+
 	err = dbg_check_synced_i_size(inode);
 	if (err)
 		return err;
@@ -556,7 +550,7 @@ static int ubifs_link(struct dentry *old_dentry, struct inode *dir,
 
 	lock_2_inodes(dir, inode);
 	inc_nlink(inode);
-	ihold(inode);
+	atomic_inc(&inode->i_count);
 	inode->i_ctime = ubifs_current_time(inode);
 	dir->i_size += sz_change;
 	dir_ui->ui_size = dir->i_size;
@@ -627,7 +621,7 @@ static int ubifs_unlink(struct inode *dir, struct dentry *dentry)
 		ubifs_release_budget(c, &req);
 	else {
 		/* We've deleted something - clean the "no space" flags */
-		c->bi.nospace = c->bi.nospace_rp = 0;
+		c->nospace = c->nospace_rp = 0;
 		smp_wmb();
 	}
 	return 0;
@@ -717,7 +711,7 @@ static int ubifs_rmdir(struct inode *dir, struct dentry *dentry)
 		ubifs_release_budget(c, &req);
 	else {
 		/* We've deleted something - clean the "no space" flags */
-		c->bi.nospace = c->bi.nospace_rp = 0;
+		c->nospace = c->nospace_rp = 0;
 		smp_wmb();
 	}
 	return 0;

@@ -110,7 +110,7 @@ instance_lookup_get(u_int16_t group_num)
 	rcu_read_lock_bh();
 	inst = __instance_lookup(group_num);
 	if (inst && !atomic_inc_not_zero(&inst->use))
-		inst = NULL;
+		inst = NULL; 
 	rcu_read_unlock_bh();
 
 	return inst;
@@ -118,8 +118,8 @@ instance_lookup_get(u_int16_t group_num)
 
 static void nfulnl_instance_free_rcu(struct rcu_head *head)
 {
-	kfree(container_of(head, struct nfulnl_instance, rcu));
-	module_put(THIS_MODULE);
+  kfree(container_of(head, struct nfulnl_instance, rcu));
+  module_put(THIS_MODULE);
 }
 
 static void
@@ -185,7 +185,6 @@ out_unlock:
 
 static void __nfulnl_flush(struct nfulnl_instance *inst);
 
-/* called with BH disabled */
 static void
 __instance_destroy(struct nfulnl_instance *inst)
 {
@@ -376,11 +375,13 @@ __build_packet_message(struct nfulnl_instance *inst,
 			unsigned int hooknum,
 			const struct net_device *indev,
 			const struct net_device *outdev,
+			const struct nf_loginfo *li,
 			const char *prefix, unsigned int plen)
 {
 	struct nfulnl_msg_packet_hdr pmsg;
 	struct nlmsghdr *nlh;
 	struct nfgenmsg *nfmsg;
+	__be32 tmp_uint;
 	sk_buff_data_t old_tail = inst->skb->tail;
 
 	nlh = NLMSG_PUT(inst->skb, 0, 0,
@@ -411,9 +412,8 @@ __build_packet_message(struct nfulnl_instance *inst,
 			NLA_PUT_BE32(inst->skb, NFULA_IFINDEX_PHYSINDEV,
 				     htonl(indev->ifindex));
 			/* this is the bridge group "brX" */
-			/* rcu_read_lock()ed by nf_hook_slow or nf_log_packet */
 			NLA_PUT_BE32(inst->skb, NFULA_IFINDEX_INDEV,
-				     htonl(br_port_get_rcu(indev)->br->dev->ifindex));
+				     htonl(indev->br_port->br->dev->ifindex));
 		} else {
 			/* Case 2: indev is bridge group, we need to look for
 			 * physical device (when called from ipv4) */
@@ -427,6 +427,7 @@ __build_packet_message(struct nfulnl_instance *inst,
 	}
 
 	if (outdev) {
+		tmp_uint = htonl(outdev->ifindex);
 #ifndef CONFIG_BRIDGE_NETFILTER
 		NLA_PUT_BE32(inst->skb, NFULA_IFINDEX_OUTDEV,
 			     htonl(outdev->ifindex));
@@ -438,9 +439,8 @@ __build_packet_message(struct nfulnl_instance *inst,
 			NLA_PUT_BE32(inst->skb, NFULA_IFINDEX_PHYSOUTDEV,
 				     htonl(outdev->ifindex));
 			/* this is the bridge group "brX" */
-			/* rcu_read_lock()ed by nf_hook_slow or nf_log_packet */
 			NLA_PUT_BE32(inst->skb, NFULA_IFINDEX_OUTDEV,
-				     htonl(br_port_get_rcu(outdev)->br->dev->ifindex));
+				     htonl(outdev->br_port->br->dev->ifindex));
 		} else {
 			/* Case 2: indev is a bridge group, we need to look
 			 * for physical device (when called from ipv4) */
@@ -456,8 +456,7 @@ __build_packet_message(struct nfulnl_instance *inst,
 	if (skb->mark)
 		NLA_PUT_BE32(inst->skb, NFULA_MARK, htonl(skb->mark));
 
-	if (indev && skb->dev &&
-	    skb->mac_header != skb->network_header) {
+	if (indev && skb->dev) {
 		struct nfulnl_msg_packet_hw phw;
 		int len = dev_parse_header(skb, phw.hw_addr);
 		if (len > 0) {
@@ -650,7 +649,7 @@ nfulnl_log_packet(u_int8_t pf,
 	inst->qlen++;
 
 	__build_packet_message(inst, skb, data_len, pf,
-				hooknum, in, out, prefix, plen);
+				hooknum, in, out, li, prefix, plen);
 
 	if (inst->qlen >= qthreshold)
 		__nfulnl_flush(inst);
@@ -872,19 +871,19 @@ static struct hlist_node *get_first(struct iter_state *st)
 
 	for (st->bucket = 0; st->bucket < INSTANCE_BUCKETS; st->bucket++) {
 		if (!hlist_empty(&instance_table[st->bucket]))
-			return rcu_dereference_bh(hlist_first_rcu(&instance_table[st->bucket]));
+			return rcu_dereference_bh(instance_table[st->bucket].first);
 	}
 	return NULL;
 }
 
 static struct hlist_node *get_next(struct iter_state *st, struct hlist_node *h)
 {
-	h = rcu_dereference_bh(hlist_next_rcu(h));
+	h = rcu_dereference_bh(h->next);
 	while (!h) {
 		if (++st->bucket >= INSTANCE_BUCKETS)
 			return NULL;
 
-		h = rcu_dereference_bh(hlist_first_rcu(&instance_table[st->bucket]));
+		h = rcu_dereference_bh(instance_table[st->bucket].first);
 	}
 	return h;
 }

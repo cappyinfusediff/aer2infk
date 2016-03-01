@@ -213,6 +213,18 @@ static int twl_rtc_alarm_irq_enable(struct device *dev, unsigned enabled)
 	return ret;
 }
 
+static int twl_rtc_update_irq_enable(struct device *dev, unsigned enabled)
+{
+	int ret;
+
+	if (enabled)
+		ret = set_rtc_irq_bit(BIT_RTC_INTERRUPTS_REG_IT_TIMER_M);
+	else
+		ret = mask_rtc_irq_bit(BIT_RTC_INTERRUPTS_REG_IT_TIMER_M);
+
+	return ret;
+}
+
 /*
  * Gets current TWL RTC time and date parameters.
  *
@@ -421,6 +433,7 @@ static struct rtc_class_ops twl_rtc_ops = {
 	.read_alarm	= twl_rtc_read_alarm,
 	.set_alarm	= twl_rtc_set_alarm,
 	.alarm_irq_enable = twl_rtc_alarm_irq_enable,
+	.update_irq_enable = twl_rtc_update_irq_enable,
 };
 
 /*----------------------------------------------------------------------*/
@@ -489,11 +502,6 @@ static int __devinit twl_rtc_probe(struct platform_device *pdev)
 		if (ret < 0)
 			goto out2;
 	}
-
-	/* ensure interrupts are disabled, bootloaders can be strange */
-	ret = twl_rtc_write_u8(0, REG_RTC_INTERRUPTS_REG);
-	if (ret < 0)
-		dev_warn(&pdev->dev, "unable to disable interrupt\n");
 
 	/* init cached IRQ enable bits */
 	ret = twl_rtc_read_u8(&rtc_irq_bits, REG_RTC_INTERRUPTS_REG);

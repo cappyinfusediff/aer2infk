@@ -69,13 +69,21 @@ static int zpff_init(struct hid_device *hid)
 	struct hid_report *report;
 	struct hid_input *hidinput = list_entry(hid->inputs.next,
 						struct hid_input, list);
+	struct list_head *report_list =
+			&hid->report_enum[HID_OUTPUT_REPORT].report_list;
 	struct input_dev *dev = hidinput->input;
-	int i, error;
+	int error;
 
-	for (i = 0; i < 4; i++) {
-		report = hid_validate_values(hid, HID_OUTPUT_REPORT, 0, i, 1);
-		if (!report)
-			return -ENODEV;
+	if (list_empty(report_list)) {
+		dev_err(&hid->dev, "no output report found\n");
+		return -ENODEV;
+	}
+
+	report = list_entry(report_list->next, struct hid_report, list);
+
+	if (report->maxfield < 4) {
+		dev_err(&hid->dev, "not enough fields in report\n");
+		return -ENODEV;
 	}
 
 	zpff = kzalloc(sizeof(struct zpff_device), GFP_KERNEL);
@@ -97,7 +105,8 @@ static int zpff_init(struct hid_device *hid)
 	zpff->report->field[3]->value[0] = 0x00;
 	usbhid_submit_report(hid, zpff->report, USB_DIR_OUT);
 
-	hid_info(hid, "force feedback for Zeroplus based devices by Anssi Hannula <anssi.hannula@gmail.com>\n");
+	dev_info(&hid->dev, "force feedback for Zeroplus based devices by "
+	       "Anssi Hannula <anssi.hannula@gmail.com>\n");
 
 	return 0;
 }
@@ -114,13 +123,13 @@ static int zp_probe(struct hid_device *hdev, const struct hid_device_id *id)
 
 	ret = hid_parse(hdev);
 	if (ret) {
-		hid_err(hdev, "parse failed\n");
+		dev_err(&hdev->dev, "parse failed\n");
 		goto err;
 	}
 
 	ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT & ~HID_CONNECT_FF);
 	if (ret) {
-		hid_err(hdev, "hw start failed\n");
+		dev_err(&hdev->dev, "hw start failed\n");
 		goto err;
 	}
 

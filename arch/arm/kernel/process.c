@@ -28,10 +28,11 @@
 #include <linux/tick.h>
 #include <linux/utsname.h>
 #include <linux/uaccess.h>
-#include <linux/random.h>
-#include <linux/hw_breakpoint.h>
-#include <linux/console.h>
 
+#include <asm/cacheflush.h>
+#include <mach/regs-clock.h>
+
+#include <asm/leds.h>
 #include <asm/cacheflush.h>
 #include <asm/processor.h>
 #include <asm/system.h>
@@ -39,15 +40,6 @@
 #include <asm/stacktrace.h>
 #include <asm/mach/time.h>
 
-#ifdef CONFIG_CC_STACKPROTECTOR
-#include <linux/stackprotector.h>
-unsigned long __stack_chk_guard __read_mostly;
-EXPORT_SYMBOL(__stack_chk_guard);
-#endif
-
-#if defined(CONFIG_MACH_ARIES) || defined(CONFIG_MACH_P1)
-#include <mach/regs-clock.h>
-#endif
 
 static const char *processor_modes[] = {
   "USER_26", "FIQ_26" , "IRQ_26" , "SVC_26" , "UK4_26" , "UK5_26" , "UK6_26" , "UK7_26" ,
@@ -65,18 +57,6 @@ extern void setup_mm_for_reboot(char mode);
 static volatile int hlt_counter;
 
 #include <mach/system.h>
-
-#ifdef CONFIG_SMP
-void arch_trigger_all_cpu_backtrace(void)
-{
-	smp_send_all_cpu_backtrace();
-}
-#else
-void arch_trigger_all_cpu_backtrace(void)
-{
-	dump_stack();
-}
-#endif
 
 void disable_hlt(void)
 {
@@ -107,37 +87,8 @@ static int __init hlt_setup(char *__unused)
 __setup("nohlt", nohlt_setup);
 __setup("hlt", hlt_setup);
 
-#ifdef CONFIG_ARM_FLUSH_CONSOLE_ON_RESTART
-void arm_machine_flush_console(void)
-{
-	printk("\n");
-	pr_emerg("Restarting %s\n", linux_banner);
-	if (console_trylock()) {
-		console_unlock();
-		return;
-	}
-
-	mdelay(50);
-
-	local_irq_disable();
-	if (!console_trylock())
-		pr_emerg("arm_restart: Console was locked! Busting\n");
-	else
-		pr_emerg("arm_restart: Console was locked!\n");
-	console_unlock();
-}
-#else
-void arm_machine_flush_console(void)
-{
-}
-#endif
-
 void arm_machine_restart(char mode, const char *cmd)
 {
-	/* Flush the console to make sure all the relevant messages make it
-	 * out to the console drivers */
-	arm_machine_flush_console();
-
 	/* Disable interrupts first */
 	local_irq_disable();
 	local_fiq_disable();
@@ -149,9 +100,7 @@ void arm_machine_restart(char mode, const char *cmd)
 	 */
 	setup_mm_for_reboot(mode);
 
-#if defined(CONFIG_MACH_ARIES) || defined(CONFIG_MACH_P1)
-	writel(0x12345678, S5P_INFORM5);  /* Turn off low power mode */
-#endif
+	writel(0x12345678, S5P_INFORM5);  /* Reset */
 
 	/* Clean and invalidate caches */
 	flush_cache_all();
@@ -185,25 +134,6 @@ EXPORT_SYMBOL(pm_power_off);
 void (*arm_pm_restart)(char str, const char *cmd) = arm_machine_restart;
 EXPORT_SYMBOL_GPL(arm_pm_restart);
 
-static void do_nothing(void *unused)
-{
-}
-
-/*
- * cpu_idle_wait - Used to ensure that all the CPUs discard old value of
- * pm_idle and update to new pm_idle value. Required while changing pm_idle
- * handler on SMP systems.
- *
- * Caller must have changed pm_idle to the new value before the call. Old
- * pm_idle value will not be used by any CPU after the return of this function.
- */
-void cpu_idle_wait(void)
-{
-	smp_mb();
-	/* kick all the CPUs so that they exit out of pm_idle */
-	smp_call_function(do_nothing, NULL, 1);
-}
-EXPORT_SYMBOL_GPL(cpu_idle_wait);
 
 /*
  * This is our default idle handler.  We need to disable
@@ -231,18 +161,15 @@ void cpu_idle(void)
 
 	/* endless idle loop with no priority at all */
 	while (1) {
+		while (!need_resched()) {
 		idle_notifier_call_chain(IDLE_START);
 		tick_nohz_stop_sched_tick(1);
-		while (!need_resched()) {
 #ifdef CONFIG_HOTPLUG_CPU
 			if (cpu_is_offline(smp_processor_id()))
 				cpu_die();
 #endif
 
 			local_irq_disable();
-#ifdef CONFIG_PL310_ERRATA_769419
-			wmb();
-#endif
 			if (hlt_counter) {
 				local_irq_enable();
 				cpu_relax();
@@ -277,29 +204,19 @@ int __init reboot_setup(char *str)
 
 __setup("reboot=", reboot_setup);
 
-void machine_shutdown(void)
-{
-#ifdef CONFIG_SMP
-	smp_send_stop();
-#endif
-}
-
 void machine_halt(void)
 {
-	machine_shutdown();
-	while (1);
 }
+
 
 void machine_power_off(void)
 {
-	machine_shutdown();
 	if (pm_power_off)
 		pm_power_off();
 }
 
 void machine_restart(char *cmd)
 {
-	machine_shutdown();
 	arm_pm_restart(reboot_mode, cmd);
 }
 
@@ -398,8 +315,8 @@ void __show_regs(struct pt_regs *regs)
 		regs->ARM_r5, regs->ARM_r4);
 	printk("r3 : %08lx  r2 : %08lx  r1 : %08lx  r0 : %08lx\n",
 		regs->ARM_r3, regs->ARM_r2,
-		regs->ARM_r1, regs->ARM_r0);
-
+		regs->ARM_r1, regs->ARM_r0);		
+	
 	flags = regs->ARM_cpsr;
 	buf[0] = flags & PSR_N_BIT ? 'N' : 'n';
 	buf[1] = flags & PSR_Z_BIT ? 'Z' : 'z';
@@ -462,8 +379,6 @@ void flush_thread(void)
 	struct thread_info *thread = current_thread_info();
 	struct task_struct *tsk = current;
 
-	flush_ptrace_hw_breakpoint(tsk);
-
 	memset(thread->used_cp, 0, sizeof(thread->used_cp));
 	memset(&tsk->thread.debug, 0, sizeof(struct debug_info));
 	memset(&thread->fpstate, 0, sizeof(union fp_state));
@@ -492,12 +407,8 @@ copy_thread(unsigned long clone_flags, unsigned long stack_start,
 	thread->cpu_context.sp = (unsigned long)childregs;
 	thread->cpu_context.pc = (unsigned long)ret_from_fork;
 
-	clear_ptrace_hw_breakpoint(p);
-
 	if (clone_flags & CLONE_SETTLS)
 		thread->tp_value = regs->ARM_r3;
-
-	thread_notify(THREAD_NOTIFY_COPY, thread);
 
 	return 0;
 }
@@ -603,32 +514,3 @@ unsigned long get_wchan(struct task_struct *p)
 	} while (count ++ < 16);
 	return 0;
 }
-
-unsigned long arch_randomize_brk(struct mm_struct *mm)
-{
-	unsigned long range_end = mm->brk + 0x02000000;
-	return randomize_range(mm->brk, range_end, 0) ? : mm->brk;
-}
-
-#ifdef CONFIG_MMU
-/*
- * The vectors page is always readable from user space for the
- * atomic helpers and the signal restart code.  Let's declare a mapping
- * for it so it is visible through ptrace and /proc/<pid>/mem.
- */
-
-int vectors_user_mapping(void)
-{
-	struct mm_struct *mm = current->mm;
-	return install_special_mapping(mm, 0xffff0000, PAGE_SIZE,
-				       VM_READ | VM_EXEC |
-				       VM_MAYREAD | VM_MAYEXEC |
-				       VM_ALWAYSDUMP | VM_RESERVED,
-				       NULL);
-}
-
-const char *arch_vma_name(struct vm_area_struct *vma)
-{
-	return (vma->vm_start == 0xffff0000) ? "[vectors]" : NULL;
-}
-#endif

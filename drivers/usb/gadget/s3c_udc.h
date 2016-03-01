@@ -85,7 +85,7 @@
 
 
 typedef enum ep_type {
-	ep_control, ep_bulk_in, ep_bulk_out, ep_interrupt, ep_isochronous
+	ep_control, ep_bulk_in, ep_bulk_out, ep_interrupt
 } ep_type_t;
 
 struct s3c_ep {
@@ -130,7 +130,6 @@ struct s3c_udc {
 
 	struct regulator *udc_vcc_d, *udc_vcc_a;
 	int udc_enabled;
-	int soft_disconnected;
 };
 
 extern struct s3c_udc *the_controller;

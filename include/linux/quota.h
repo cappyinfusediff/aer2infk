@@ -322,12 +322,9 @@ struct dquot_operations {
 	qsize_t *(*get_reserved_space) (struct inode *);
 };
 
-struct path;
-
 /* Operations handling requests from userspace */
 struct quotactl_ops {
-	int (*quota_on)(struct super_block *, int, int, struct path *);
-	int (*quota_on_meta)(struct super_block *, int, int);
+	int (*quota_on)(struct super_block *, int, int, char *);
 	int (*quota_off)(struct super_block *, int);
 	int (*quota_sync)(struct super_block *, int, int);
 	int (*get_info)(struct super_block *, int, struct if_dqinfo *);
@@ -413,7 +410,6 @@ struct quota_module_name {
 #define INIT_QUOTA_MODULE_NAMES {\
 	{QFMT_VFS_OLD, "quota_v1"},\
 	{QFMT_VFS_V0, "quota_v2"},\
-	{QFMT_VFS_V1, "quota_v2"},\
 	{0, NULL}}
 
 #else

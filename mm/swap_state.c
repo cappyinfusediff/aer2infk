@@ -24,17 +24,20 @@
 
 /*
  * swapper_space is a fiction, retained to simplify the path through
- * vmscan's shrink_page_list.
+ * vmscan's shrink_page_list, to make sync_page look nicer, and to allow
+ * future use of radix_tree tags in the swap cache.
  */
 static const struct address_space_operations swap_aops = {
 	.writepage	= swap_writepage,
-	.set_page_dirty	= __set_page_dirty_no_writeback,
+	.sync_page	= block_sync_page,
+	.set_page_dirty	= __set_page_dirty_nobuffers,
 	.migratepage	= migrate_page,
 };
 
 static struct backing_dev_info swap_backing_dev_info = {
 	.name		= "swap",
 	.capabilities	= BDI_CAP_NO_ACCT_AND_WRITEBACK | BDI_CAP_SWAP_BACKED,
+	.unplug_io_fn	= swap_unplug_io_fn,
 };
 
 struct address_space swapper_space = {
@@ -153,12 +156,6 @@ int add_to_swap(struct page *page)
 	entry = get_swap_page();
 	if (!entry.val)
 		return 0;
-
-	if (unlikely(PageTransHuge(page)))
-		if (unlikely(split_huge_page(page))) {
-			swapcache_free(entry, NULL);
-			return 0;
-		}
 
 	/*
 	 * Radix-tree node allocations from PF_MEMALLOC contexts could
@@ -315,24 +312,8 @@ struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 		 * Swap entry may have been freed since our caller observed it.
 		 */
 		err = swapcache_prepare(entry);
-		if (err == -EEXIST) {
+		if (err == -EEXIST) {	/* seems racy */
 			radix_tree_preload_end();
-			/*
-			 * We might race against get_swap_page() and stumble
-			 * across a SWAP_HAS_CACHE swap_map entry whose page
-			 * has not been brought into the swapcache yet, while
-			 * the other end is scheduled away waiting on discard
-			 * I/O completion at scan_swap_map().
-			 *
-			 * In order to avoid turning this transitory state
-			 * into a permanent loop around this -EEXIST case
-			 * if !CONFIG_PREEMPT and the I/O completion happens
-			 * to be waiting on the CPU waitqueue where we are now
-			 * busy looping, we just conditionally invoke the
-			 * scheduler here, if there are some more important
-			 * tasks to run.
-			 */
-			cond_resched();
 			continue;
 		}
 		if (err) {		/* swp entry is obsolete ? */

@@ -148,7 +148,7 @@ static unsigned int ip_nat_sip(struct sk_buff *skb, unsigned int dataoff,
 	if (ct_sip_parse_header_uri(ct, *dptr, NULL, *datalen,
 				    hdr, NULL, &matchoff, &matchlen,
 				    &addr, &port) > 0) {
-		unsigned int olen, matchend, poff, plen, buflen, n;
+		unsigned int matchend, poff, plen, buflen, n;
 		char buffer[sizeof("nnn.nnn.nnn.nnn:nnnnn")];
 
 		/* We're only interested in headers related to this
@@ -163,12 +163,11 @@ static unsigned int ip_nat_sip(struct sk_buff *skb, unsigned int dataoff,
 				goto next;
 		}
 
-		olen = *datalen;
 		if (!map_addr(skb, dataoff, dptr, datalen, matchoff, matchlen,
 			      &addr, port))
 			return NF_DROP;
 
-		matchend = matchoff + matchlen + *datalen - olen;
+		matchend = matchoff + matchlen;
 
 		/* The maddr= parameter (RFC 2361) specifies where to send
 		 * the reply. */
@@ -308,16 +307,9 @@ static unsigned int ip_nat_sip_expect(struct sk_buff *skb, unsigned int dataoff,
 	exp->expectfn = ip_nat_sip_expected;
 
 	for (; port != 0; port++) {
-		int ret;
-
 		exp->tuple.dst.u.udp.port = htons(port);
-		ret = nf_ct_expect_related(exp);
-		if (ret == 0)
+		if (nf_ct_expect_related(exp) == 0)
 			break;
-		else if (ret != -EBUSY) {
-			port = 0;
-			break;
-		}
 	}
 
 	if (port == 0)
@@ -488,28 +480,13 @@ static unsigned int ip_nat_sdp_media(struct sk_buff *skb, unsigned int dataoff,
 	/* Try to get same pair of ports: if not, try to change them. */
 	for (port = ntohs(rtp_exp->tuple.dst.u.udp.port);
 	     port != 0; port += 2) {
-		int ret;
-
 		rtp_exp->tuple.dst.u.udp.port = htons(port);
-		ret = nf_ct_expect_related(rtp_exp);
-		if (ret == -EBUSY)
+		if (nf_ct_expect_related(rtp_exp) != 0)
 			continue;
-		else if (ret < 0) {
-			port = 0;
-			break;
-		}
 		rtcp_exp->tuple.dst.u.udp.port = htons(port + 1);
-		ret = nf_ct_expect_related(rtcp_exp);
-		if (ret == 0)
+		if (nf_ct_expect_related(rtcp_exp) == 0)
 			break;
-		else if (ret == -EBUSY) {
-			nf_ct_unexpect_related(rtp_exp);
-			continue;
-		} else if (ret < 0) {
-			nf_ct_unexpect_related(rtp_exp);
-			port = 0;
-			break;
-		}
+		nf_ct_unexpect_related(rtp_exp);
 	}
 
 	if (port == 0)

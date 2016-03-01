@@ -433,7 +433,7 @@ static int write_i2c_mem(struct edgeport_serial *serial,
 
 	/* We can only send a maximum of 1 aligned byte page at a time */
 
-	/* calculate the number of bytes left in the first page */
+	/* calulate the number of bytes left in the first page */
 	write_length = EPROM_PAGE_SIZE -
 				(start_address & (EPROM_PAGE_SIZE - 1));
 
@@ -557,9 +557,6 @@ static void chase_port(struct edgeport_port *port, unsigned long timeout,
 	struct tty_struct *tty = tty_port_tty_get(&port->port->port);
 	wait_queue_t wait;
 	unsigned long flags;
-
-	if (!tty)
-		return;
 
 	if (!timeout)
 		timeout = (HZ * EDGE_CLOSING_WAIT)/100;
@@ -1287,7 +1284,7 @@ static int download_fw(struct edgeport_serial *serial)
 				kfree(header);
 				kfree(rom_desc);
 				kfree(ti_manuf_desc);
-				return -EINVAL;
+				return status;
 			}
 
 			/* Update I2C with type 0xf2 record with correct
@@ -1301,7 +1298,7 @@ static int download_fw(struct edgeport_serial *serial)
 				kfree(header);
 				kfree(rom_desc);
 				kfree(ti_manuf_desc);
-				return -EINVAL;
+				return status;
 			}
 
 			/* verify the write -- must do this in order for
@@ -1324,7 +1321,7 @@ static int download_fw(struct edgeport_serial *serial)
 				kfree(header);
 				kfree(rom_desc);
 				kfree(ti_manuf_desc);
-				return -EINVAL;
+				return status;
 			}
 
 			kfree(vheader);
@@ -1574,6 +1571,8 @@ static void handle_new_msr(struct edgeport_port *edge_port, __u8 msr)
 		}
 	}
 	tty_kref_put(tty);
+
+	return;
 }
 
 static void handle_new_lsr(struct edgeport_port *edge_port, int lsr_data,
@@ -2425,6 +2424,7 @@ static void change_port_settings(struct tty_struct *tty,
 		dbg("%s - error %d when trying to write config to device",
 		     __func__, status);
 	kfree(config);
+	return;
 }
 
 static void edge_set_termios(struct tty_struct *tty,
@@ -2445,9 +2445,10 @@ static void edge_set_termios(struct tty_struct *tty,
 		return;
 	/* change the port settings to the new ones specified */
 	change_port_settings(tty, edge_port, old_termios);
+	return;
 }
 
-static int edge_tiocmset(struct tty_struct *tty,
+static int edge_tiocmset(struct tty_struct *tty, struct file *file,
 					unsigned int set, unsigned int clear)
 {
 	struct usb_serial_port *port = tty->driver_data;
@@ -2480,7 +2481,7 @@ static int edge_tiocmset(struct tty_struct *tty,
 	return 0;
 }
 
-static int edge_tiocmget(struct tty_struct *tty)
+static int edge_tiocmget(struct tty_struct *tty, struct file *file)
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct edgeport_port *edge_port = usb_get_serial_port_data(port);
@@ -2509,27 +2510,6 @@ static int edge_tiocmget(struct tty_struct *tty)
 	return result;
 }
 
-static int edge_get_icount(struct tty_struct *tty,
-				struct serial_icounter_struct *icount)
-{
-	struct usb_serial_port *port = tty->driver_data;
-	struct edgeport_port *edge_port = usb_get_serial_port_data(port);
-	struct async_icount *ic = &edge_port->icount;
-
-	icount->cts = ic->cts;
-	icount->dsr = ic->dsr;
-	icount->rng = ic->rng;
-	icount->dcd = ic->dcd;
-	icount->tx = ic->tx;
-        icount->rx = ic->rx;
-        icount->frame = ic->frame;
-        icount->parity = ic->parity;
-        icount->overrun = ic->overrun;
-        icount->brk = ic->brk;
-        icount->buf_overrun = ic->buf_overrun;
-	return 0;
-}
-
 static int get_serial_info(struct edgeport_port *edge_port,
 				struct serial_struct __user *retinfo)
 {
@@ -2555,7 +2535,7 @@ static int get_serial_info(struct edgeport_port *edge_port,
 	return 0;
 }
 
-static int edge_ioctl(struct tty_struct *tty,
+static int edge_ioctl(struct tty_struct *tty, struct file *file,
 					unsigned int cmd, unsigned long arg)
 {
 	struct usb_serial_port *port = tty->driver_data;
@@ -2592,6 +2572,13 @@ static int edge_ioctl(struct tty_struct *tty,
 		}
 		/* not reached */
 		break;
+	case TIOCGICOUNT:
+		dbg("%s - (%d) TIOCGICOUNT RX=%d, TX=%d", __func__,
+		     port->number, edge_port->icount.rx, edge_port->icount.tx);
+		if (copy_to_user((void __user *)arg, &edge_port->icount,
+				sizeof(edge_port->icount)))
+			return -EFAULT;
+		return 0;
 	}
 	return -ENOIOCTLCMD;
 }
@@ -2680,7 +2667,15 @@ cleanup:
 
 static void edge_disconnect(struct usb_serial *serial)
 {
+	int i;
+	struct edgeport_port *edge_port;
+
 	dbg("%s", __func__);
+
+	for (i = 0; i < serial->num_ports; ++i) {
+		edge_port = usb_get_serial_port_data(serial->port[i]);
+		edge_remove_sysfs_attrs(edge_port->port);
+	}
 }
 
 static void edge_release(struct usb_serial *serial)
@@ -2759,12 +2754,10 @@ static struct usb_serial_driver edgeport_1port_device = {
 	.disconnect		= edge_disconnect,
 	.release		= edge_release,
 	.port_probe		= edge_create_sysfs_attrs,
-	.port_remove		= edge_remove_sysfs_attrs,
 	.ioctl			= edge_ioctl,
 	.set_termios		= edge_set_termios,
 	.tiocmget		= edge_tiocmget,
 	.tiocmset		= edge_tiocmset,
-	.get_icount		= edge_get_icount,
 	.write			= edge_write,
 	.write_room		= edge_write_room,
 	.chars_in_buffer	= edge_chars_in_buffer,
@@ -2791,12 +2784,10 @@ static struct usb_serial_driver edgeport_2port_device = {
 	.disconnect		= edge_disconnect,
 	.release		= edge_release,
 	.port_probe		= edge_create_sysfs_attrs,
-	.port_remove		= edge_remove_sysfs_attrs,
 	.ioctl			= edge_ioctl,
 	.set_termios		= edge_set_termios,
 	.tiocmget		= edge_tiocmget,
 	.tiocmset		= edge_tiocmset,
-	.get_icount		= edge_get_icount,
 	.write			= edge_write,
 	.write_room		= edge_write_room,
 	.chars_in_buffer	= edge_chars_in_buffer,

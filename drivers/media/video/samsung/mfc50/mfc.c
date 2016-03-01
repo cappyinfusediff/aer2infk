@@ -85,7 +85,7 @@ static int mfc_open(struct inode *inode, struct file *file)
 		}
 
 #ifdef CONFIG_DVFS_LIMIT
-		s5pv210_lock_dvfs_high_level(DVFS_LOCK_TOKEN_1, L2);
+		s5pv210_lock_dvfs_high_level(DVFS_LOCK_TOKEN_1, L4);
 #endif
 		clk_enable(mfc_sclk);
 
@@ -472,11 +472,8 @@ static int mfc_mmap(struct file *filp, struct vm_area_struct *vma)
 				vir_size, phy_size);
 		return -EINVAL;
 	}
-#ifdef CONFIG_MACH_ARIES
+
 	mfc_ctx->port0_mmap_size = mfc_port0_memsize - firmware_size;
-#else // CONFIG_MACH_P1
-	mfc_ctx->port0_mmap_size = (vir_size / 2);
-#endif
 
 	vma->vm_flags |= VM_RESERVED | VM_IO;
 	if (mfc_ctx->buf_type != MFC_BUFFER_CACHE)

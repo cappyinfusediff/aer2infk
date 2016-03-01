@@ -363,9 +363,18 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	int cpu = smp_processor_id();
 	struct tss_struct *tss = &per_cpu(init_tss, cpu);
 	unsigned fsindex, gsindex;
-	fpu_switch_t fpu;
+	bool preload_fpu;
 
-	fpu = switch_fpu_prepare(prev_p, next_p);
+	/*
+	 * If the task has used fpu the last 5 timeslices, just do a full
+	 * restore of the math state immediately to avoid the trap; the
+	 * chances of needing FPU soon are obviously high now
+	 */
+	preload_fpu = tsk_used_math(next_p) && next_p->fpu_counter > 5;
+
+	/* we're going to use this soon, after a few expensive things */
+	if (preload_fpu)
+		prefetch(next->fpu.state);
 
 	/*
 	 * Reload esp0, LDT and the page table pointer:
@@ -377,11 +386,11 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	 * This won't pick up thread selector changes, but I guess that is ok.
 	 */
 	savesegment(es, prev->es);
-	if (unlikely(next->es | prev->es))
+	if (next->es | prev->es)
 		loadsegment(es, next->es);
 
 	savesegment(ds, prev->ds);
-	if (unlikely(next->ds | prev->ds))
+	if (next->ds | prev->ds)
 		loadsegment(ds, next->ds);
 
 
@@ -394,6 +403,13 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	savesegment(gs, gsindex);
 
 	load_TLS(next, cpu);
+
+	/* Must be after DS reload */
+	unlazy_fpu(prev_p);
+
+	/* Make sure cpu is ready for new context */
+	if (preload_fpu)
+		clts();
 
 	/*
 	 * Leave lazy mode, flushing any hypercalls made here.
@@ -426,7 +442,7 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 		wrmsrl(MSR_FS_BASE, next->fs);
 	prev->fsindex = fsindex;
 
-	if (unlikely(gsindex | next->gsindex | prev->gs)) {
+	if (gsindex | next->gsindex | prev->gs) {
 		load_gs_index(next->gsindex);
 		if (gsindex)
 			prev->gs = 0;
@@ -434,8 +450,6 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	if (next->gs)
 		wrmsrl(MSR_KERNEL_GS_BASE, next->gs);
 	prev->gsindex = gsindex;
-
-	switch_fpu_finish(next_p, fpu);
 
 	/*
 	 * Switch the PDA and FPU contexts.
@@ -455,6 +469,13 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 		     task_thread_info(prev_p)->flags & _TIF_WORK_CTXSW_PREV))
 		__switch_to_xtra(prev_p, next_p, tss);
 
+	/*
+	 * Preload the FPU context, now that we've determined that the
+	 * task is likely to be using it. 
+	 */
+	if (preload_fpu)
+		__math_state_restore();
+
 	return prev_p;
 }
 
@@ -464,10 +485,6 @@ void set_personality_64bit(void)
 
 	/* Make sure to be in 64bit mode */
 	clear_thread_flag(TIF_IA32);
-
-	/* Ensure the corresponding mm is not marked. */
-	if (current->mm)
-		current->mm->context.ia32_compat = 0;
 
 	/* TBD: overwrites user setup. Should have two bits.
 	   But 64bit processes have always behaved this way,
@@ -483,10 +500,6 @@ void set_personality_ia32(void)
 	/* Make sure to be in 32bit mode */
 	set_thread_flag(TIF_IA32);
 	current->personality |= force_personality32;
-
-	/* Mark the associated mm as containing 32-bit tasks. */
-	if (current->mm)
-		current->mm->context.ia32_compat = 1;
 
 	/* Prepare the first "return" to user space */
 	current_thread_info()->status |= TS_COMPAT;

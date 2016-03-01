@@ -61,14 +61,18 @@
 #include "rf.h"
 #include "datarate.h"
 #include "usbpipe.h"
+
+#ifdef WPA_SM_Transtatus
 #include "iocmd.h"
+#endif
 
 /*---------------------  Static Definitions -------------------------*/
 
 /*---------------------  Static Classes  ----------------------------*/
 
 /*---------------------  Static Variables  --------------------------*/
-static int          msglevel                = MSG_LEVEL_INFO;
+//static int          msglevel                =MSG_LEVEL_DEBUG;
+static int          msglevel                =MSG_LEVEL_INFO;
 
 /*---------------------  Static Functions  --------------------------*/
 
@@ -300,9 +304,10 @@ s_vSaveTxPktInfo(PSDevice pDevice, BYTE byPktNum, PBYTE pbyDestAddr, WORD wPktLe
 {
     PSStatCounter           pStatistic=&(pDevice->scStatistic);
 
-    if (is_broadcast_ether_addr(pbyDestAddr))
+
+    if (IS_BROADCAST_ADDRESS(pbyDestAddr))
         pStatistic->abyTxPktInfo[byPktNum].byBroadMultiUni = TX_PKT_BROAD;
-    else if (is_multicast_ether_addr(pbyDestAddr))
+    else if (IS_MULTICAST_ADDRESS(pbyDestAddr))
         pStatistic->abyTxPktInfo[byPktNum].byBroadMultiUni = TX_PKT_MULTI;
     else
         pStatistic->abyTxPktInfo[byPktNum].byBroadMultiUni = TX_PKT_UNI;
@@ -313,6 +318,9 @@ s_vSaveTxPktInfo(PSDevice pDevice, BYTE byPktNum, PBYTE pbyDestAddr, WORD wPktLe
 	   pbyDestAddr,
 	   ETH_ALEN);
 }
+
+
+
 
 static
 void
@@ -377,8 +385,7 @@ s_vFillTxKey (
         *(pbyIVHead+3) = (BYTE)(((pDevice->byKeyIndex << 6) & 0xc0) | 0x20); // 0x20 is ExtIV
         // Append IV&ExtIV after Mac Header
         *pdwExtIV = cpu_to_le32(pTransmitKey->dwTSC47_16);
-	DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"vFillTxKey()---- pdwExtIV: %x\n",
-		*pdwExtIV);
+        DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"vFillTxKey()---- pdwExtIV: %lx\n", *pdwExtIV);
 
     } else if (pTransmitKey->byCipherSuite == KEY_CTL_CCMP) {
         pTransmitKey->wTSC15_0++;
@@ -841,8 +848,8 @@ s_uFillDataHead (
     }
 
     if (byPktType == PK_TYPE_11GB || byPktType == PK_TYPE_11GA) {
-	if ((uDMAIdx == TYPE_ATIMDMA) || (uDMAIdx == TYPE_BEACONDMA)) {
-		PSTxDataHead_ab pBuf = (PSTxDataHead_ab) pTxDataHead;
+        if((uDMAIdx==TYPE_ATIMDMA)||(uDMAIdx==TYPE_BEACONDMA)) {
+            PSTxDataHead_ab pBuf = (PSTxDataHead_ab)pTxDataHead;
             //Get SignalField,ServiceField,Length
             BBvCaculateParameter(pDevice, cbFrameLength, wCurrentRate, byPktType,
                 (PWORD)&(pBuf->wTransmitLength), (PBYTE)&(pBuf->byServiceField), (PBYTE)&(pBuf->bySignalField)
@@ -1466,7 +1473,7 @@ s_bPacketToWirelessUsb(
     memset(pTxBufHead, 0, sizeof(TX_BUFFER));
 
     // Get pkt type
-    if (ntohs(psEthHeader->wType) > ETH_DATA_LEN) {
+    if (ntohs(psEthHeader->wType) > MAX_DATA_LEN) {
         if (pDevice->dwDiagRefCount == 0) {
             cb802_1_H_len = 8;
         } else {
@@ -1485,16 +1492,17 @@ s_bPacketToWirelessUsb(
         bNeedACK = FALSE;
         pTxBufHead->wFIFOCtl = pTxBufHead->wFIFOCtl & (~FIFOCTL_NEEDACK);
     } else { //if (pDevice->dwDiagRefCount != 0) {
-	if ((pDevice->eOPMode == OP_MODE_ADHOC) ||
-	    (pDevice->eOPMode == OP_MODE_AP)) {
-		if (is_multicast_ether_addr(psEthHeader->abyDstAddr)) {
-			bNeedACK = FALSE;
-			pTxBufHead->wFIFOCtl =
-				pTxBufHead->wFIFOCtl & (~FIFOCTL_NEEDACK);
-		} else {
-			bNeedACK = TRUE;
-			pTxBufHead->wFIFOCtl |= FIFOCTL_NEEDACK;
-		}
+        if ((pDevice->eOPMode == OP_MODE_ADHOC) ||
+            (pDevice->eOPMode == OP_MODE_AP)) {
+            if (IS_MULTICAST_ADDRESS(&(psEthHeader->abyDstAddr[0])) ||
+                IS_BROADCAST_ADDRESS(&(psEthHeader->abyDstAddr[0]))) {
+                bNeedACK = FALSE;
+                pTxBufHead->wFIFOCtl = pTxBufHead->wFIFOCtl & (~FIFOCTL_NEEDACK);
+            }
+            else {
+                bNeedACK = TRUE;
+                pTxBufHead->wFIFOCtl |= FIFOCTL_NEEDACK;
+            }
         }
         else {
             // MSDUs in Infra mode always need ACK
@@ -1700,12 +1708,11 @@ s_bPacketToWirelessUsb(
     }
 
     // 802.1H
-    if (ntohs(psEthHeader->wType) > ETH_DATA_LEN) {
-	if (pDevice->dwDiagRefCount == 0) {
-		if ((psEthHeader->wType == cpu_to_be16(ETH_P_IPX)) ||
-		    (psEthHeader->wType == cpu_to_le16(0xF380))) {
-			memcpy((PBYTE) (pbyPayloadHead),
-			       abySNAP_Bridgetunnel, 6);
+    if (ntohs(psEthHeader->wType) > MAX_DATA_LEN) {
+        if (pDevice->dwDiagRefCount == 0) {
+            if ( (psEthHeader->wType == TYPE_PKT_IPX) ||
+                 (psEthHeader->wType == cpu_to_le16(0xF380))) {
+                memcpy((PBYTE) (pbyPayloadHead), &abySNAP_Bridgetunnel[0], 6);
             } else {
                 memcpy((PBYTE) (pbyPayloadHead), &abySNAP_RFC1042[0], 6);
             }
@@ -1754,8 +1761,7 @@ s_bPacketToWirelessUsb(
         MIC_vAppend((PBYTE)&(psEthHeader->abyDstAddr[0]), 12);
         dwMIC_Priority = 0;
         MIC_vAppend((PBYTE)&dwMIC_Priority, 4);
-	DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"MIC KEY: %X, %X\n",
-		dwMICKey0, dwMICKey1);
+        DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"MIC KEY: %lX, %lX\n", dwMICKey0, dwMICKey1);
 
         ///////////////////////////////////////////////////////////////////
 
@@ -1940,7 +1946,7 @@ s_vGenerateMACHeader (
  *  Out:
  *      none
  *
- * Return Value: CMD_STATUS_PENDING if MAC Tx resource available; otherwise FALSE
+ * Return Value: CMD_STATUS_PENDING if MAC Tx resource avaliable; otherwise FALSE
  *
 -*/
 
@@ -2031,7 +2037,9 @@ CMD_STATUS csMgmt_xmit(
     pTxBufHead->wFIFOCtl |= FIFOCTL_TMOEN;
     pTxBufHead->wTimeStamp = cpu_to_le16(DEFAULT_MGN_LIFETIME_RES_64us);
 
-    if (is_multicast_ether_addr(pPacket->p80211Header->sA3.abyAddr1)) {
+
+    if (IS_MULTICAST_ADDRESS(&(pPacket->p80211Header->sA3.abyAddr1[0])) ||
+        IS_BROADCAST_ADDRESS(&(pPacket->p80211Header->sA3.abyAddr1[0]))) {
         bNeedACK = FALSE;
     }
     else {
@@ -2438,18 +2446,20 @@ vDMA0_tx_80211(PSDevice  pDevice, struct sk_buff *skb) {
     pTxBufHead->wFIFOCtl |= FIFOCTL_TMOEN;
     pTxBufHead->wTimeStamp = cpu_to_le16(DEFAULT_MGN_LIFETIME_RES_64us);
 
-    if (is_multicast_ether_addr(p80211Header->sA3.abyAddr1)) {
+
+    if (IS_MULTICAST_ADDRESS(&(p80211Header->sA3.abyAddr1[0])) ||
+        IS_BROADCAST_ADDRESS(&(p80211Header->sA3.abyAddr1[0]))) {
         bNeedACK = FALSE;
         if (pDevice->bEnableHostWEP) {
             uNodeIndex = 0;
             bNodeExist = TRUE;
-        }
+        };
     }
     else {
         if (pDevice->bEnableHostWEP) {
             if (BSSbIsSTAInNodeDB(pDevice, (PBYTE)(p80211Header->sA3.abyAddr1), &uNodeIndex))
                 bNodeExist = TRUE;
-        }
+        };
         bNeedACK = TRUE;
         pTxBufHead->wFIFOCtl |= FIFOCTL_NEEDACK;
     };
@@ -2637,8 +2647,7 @@ vDMA0_tx_80211(PSDevice  pDevice, struct sk_buff *skb) {
             MIC_vAppend((PBYTE)&(sEthHeader.abyDstAddr[0]), 12);
             dwMIC_Priority = 0;
             MIC_vAppend((PBYTE)&dwMIC_Priority, 4);
-		DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"DMA0_tx_8021:MIC KEY:"\
-			" %X, %X\n", dwMICKey0, dwMICKey1);
+            DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"DMA0_tx_8021:MIC KEY: %lX, %lX\n", dwMICKey0, dwMICKey1);
 
             uLength = cbHeaderSize + cbMacHdLen + uPadding + cbIVlen;
 
@@ -2658,8 +2667,7 @@ vDMA0_tx_80211(PSDevice  pDevice, struct sk_buff *skb) {
 
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"uLength: %d, %d\n", uLength, cbFrameBodySize);
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"cbReqCount:%d, %d, %d, %d\n", cbReqCount, cbHeaderSize, uPadding, cbIVlen);
-		DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"MIC:%x, %x\n",
-			*pdwMIC_L, *pdwMIC_R);
+            DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"MIC:%lx, %lx\n", *pdwMIC_L, *pdwMIC_R);
 
         }
 
@@ -2733,7 +2741,14 @@ vDMA0_tx_80211(PSDevice  pDevice, struct sk_buff *skb) {
  * Return Value: NULL
  */
 
-int nsDMA_tx_packet(PSDevice pDevice, unsigned int uDMAIdx, struct sk_buff *skb)
+
+
+NTSTATUS
+nsDMA_tx_packet(
+      PSDevice pDevice,
+      unsigned int    uDMAIdx,
+      struct sk_buff *skb
+    )
 {
     PSMgmtObject    pMgmt = &(pDevice->sMgmtObj);
     unsigned int BytesToWrite = 0, uHeaderLen = 0;
@@ -2755,6 +2770,9 @@ int nsDMA_tx_packet(PSDevice pDevice, unsigned int uDMAIdx, struct sk_buff *skb)
     unsigned int            status;
     WORD            wKeepRate = pDevice->wCurrentRate;
     struct net_device_stats* pStats = &pDevice->stats;
+//#ifdef WPA_SM_Transtatus
+  //  extern SWPAResult wpa_Result;
+//#endif
      BOOL            bTxeapol_key = FALSE;
 
 
@@ -2765,7 +2783,7 @@ int nsDMA_tx_packet(PSDevice pDevice, unsigned int uDMAIdx, struct sk_buff *skb)
             return 0;
         }
 
-	if (is_multicast_ether_addr((PBYTE)(skb->data))) {
+        if (IS_MULTICAST_ADDRESS((PBYTE)(skb->data))) {
             uNodeIndex = 0;
             bNodeExist = TRUE;
             if (pMgmt->sNodeDBTable[0].bPSEnable) {
@@ -2844,10 +2862,9 @@ int nsDMA_tx_packet(PSDevice pDevice, unsigned int uDMAIdx, struct sk_buff *skb)
     Packet_Type = skb->data[ETH_HLEN+1];
     Descriptor_type = skb->data[ETH_HLEN+1+1+2];
     Key_info = (skb->data[ETH_HLEN+1+1+2+1] << 8)|(skb->data[ETH_HLEN+1+1+2+2]);
-	if (pDevice->sTxEthHeader.wType == cpu_to_be16(ETH_P_PAE)) {
-		/* 802.1x OR eapol-key challenge frame transfer */
-		if (((Protocol_Version == 1) || (Protocol_Version == 2)) &&
-			(Packet_Type == 3)) {
+   if (pDevice->sTxEthHeader.wType == TYPE_PKT_802_1x) {
+           if(((Protocol_Version==1) ||(Protocol_Version==2)) &&
+	        (Packet_Type==3)) {  //802.1x OR eapol-key challenge frame transfer
                         bTxeapol_key = TRUE;
                        if(!(Key_info & BIT3) &&  //WPA or RSN group-key challenge
 			   (Key_info & BIT8) && (Key_info & BIT9)) {    //send 2/2 key
@@ -2958,7 +2975,7 @@ int nsDMA_tx_packet(PSDevice pDevice, unsigned int uDMAIdx, struct sk_buff *skb)
     else {
         if (pDevice->eOPMode == OP_MODE_ADHOC) {
             // Adhoc Tx rate decided from node DB
-	    if (is_multicast_ether_addr(pDevice->sTxEthHeader.abyDstAddr)) {
+            if (IS_MULTICAST_ADDRESS(&(pDevice->sTxEthHeader.abyDstAddr[0]))) {
                 // Multicast use highest data rate
                 pDevice->wCurrentRate = pMgmt->sNodeDBTable[0].wTxDataRate;
                 // preamble type
@@ -2993,19 +3010,19 @@ int nsDMA_tx_packet(PSDevice pDevice, unsigned int uDMAIdx, struct sk_buff *skb)
         }
     }
 
-	if (pDevice->sTxEthHeader.wType == cpu_to_be16(ETH_P_PAE)) {
-		if (pDevice->byBBType != BB_TYPE_11A) {
-			pDevice->wCurrentRate = RATE_1M;
-			pDevice->byACKRate = RATE_1M;
-			pDevice->byTopCCKBasicRate = RATE_1M;
-			pDevice->byTopOFDMBasicRate = RATE_6M;
-		} else {
-			pDevice->wCurrentRate = RATE_6M;
-			pDevice->byACKRate = RATE_6M;
-			pDevice->byTopCCKBasicRate = RATE_1M;
-			pDevice->byTopOFDMBasicRate = RATE_6M;
-		}
-	}
+    if (pDevice->sTxEthHeader.wType == TYPE_PKT_802_1x) {
+        if (pDevice->byBBType != BB_TYPE_11A) {
+            pDevice->wCurrentRate = RATE_1M;
+            pDevice->byACKRate = RATE_1M;
+            pDevice->byTopCCKBasicRate = RATE_1M;
+            pDevice->byTopOFDMBasicRate = RATE_6M;
+        } else {
+            pDevice->wCurrentRate = RATE_6M;
+            pDevice->byACKRate = RATE_6M;
+            pDevice->byTopCCKBasicRate = RATE_1M;
+            pDevice->byTopOFDMBasicRate = RATE_6M;
+        }
+    }
 
     DBG_PRT(MSG_LEVEL_DEBUG,
 	    KERN_INFO "dma_tx: pDevice->wCurrentRate = %d\n",
@@ -3021,8 +3038,8 @@ int nsDMA_tx_packet(PSDevice pDevice, unsigned int uDMAIdx, struct sk_buff *skb)
 
     if (bNeedEncryption == TRUE) {
         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"ntohs Pkt Type=%04x\n", ntohs(pDevice->sTxEthHeader.wType));
-	if ((pDevice->sTxEthHeader.wType) == cpu_to_be16(ETH_P_PAE)) {
-		bNeedEncryption = FALSE;
+        if ((pDevice->sTxEthHeader.wType) == TYPE_PKT_802_1x) {
+            bNeedEncryption = FALSE;
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"Pkt Type=%04x\n", (pDevice->sTxEthHeader.wType));
             if ((pMgmt->eCurrMode == WMAC_MODE_ESS_STA) && (pMgmt->eCurrState == WMAC_STATE_ASSOC)) {
                 if (pTransmitKey == NULL) {
@@ -3033,8 +3050,7 @@ int nsDMA_tx_packet(PSDevice pDevice, unsigned int uDMAIdx, struct sk_buff *skb)
                         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"error: KEY is GTK!!~~\n");
                     }
                     else {
-			DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"Find PTK [%X]\n",
-				pTransmitKey->dwKeyIndex);
+                        DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"Find PTK [%lX]\n", pTransmitKey->dwKeyIndex);
                         bNeedEncryption = TRUE;
                     }
                 }
@@ -3048,20 +3064,35 @@ int nsDMA_tx_packet(PSDevice pDevice, unsigned int uDMAIdx, struct sk_buff *skb)
             if (pDevice->bEnableHostWEP) {
                 if ((uNodeIndex != 0) &&
                     (pMgmt->sNodeDBTable[uNodeIndex].dwKeyIndex & PAIRWISE_KEY)) {
-			DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"Find PTK [%X]\n",
-				pTransmitKey->dwKeyIndex);
+                    DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"Find PTK [%lX]\n", pTransmitKey->dwKeyIndex);
                     bNeedEncryption = TRUE;
                  }
              }
         }
         else {
 
+#if 0
+            if((pDevice->fWPA_Authened == FALSE) &&
+		((pMgmt->eAuthenMode == WMAC_AUTH_WPAPSK)||(pMgmt->eAuthenMode = WMAC_AUTH_WPA2PSK))){
+                  dev_kfree_skb_irq(skb);
+                  pStats->tx_dropped++;
+                  return STATUS_FAILURE;
+            }
+	        else if (pTransmitKey == NULL) {
+                DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"return no tx key\n");
+                dev_kfree_skb_irq(skb);
+                pStats->tx_dropped++;
+                return STATUS_FAILURE;
+            }
+#else
             if (pTransmitKey == NULL) {
                 DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"return no tx key\n");
                 dev_kfree_skb_irq(skb);
                 pStats->tx_dropped++;
                 return STATUS_FAILURE;
             }
+#endif
+
         }
     }
 
@@ -3230,8 +3261,7 @@ bRelayPacketSend (
     if (pDevice->wCurrentRate <= RATE_11M)
         byPktType = PK_TYPE_11B;
 
-    BytesToWrite = uDataLen + ETH_FCS_LEN;
-
+    BytesToWrite = uDataLen + U_CRC_LEN;
     // Convert the packet to an usb frame and copy into our buffer
     // and send the irp.
 

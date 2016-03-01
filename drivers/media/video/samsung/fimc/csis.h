@@ -13,7 +13,7 @@
 #ifndef __CSIS_H
 #define __CSIS_H __FILE__
 
-#define S3C_CSIS_NAME		"s5p-mipi-csis"
+#define S3C_CSIS_NAME		"s3c-csis"
 #define S3C_CSIS_NR_LANES	1
 
 #define info(args...)	\
@@ -37,6 +37,9 @@ struct s3c_csis_info {
 	void __iomem	*regs;
 	int		irq;
 	int		nr_lanes;
+#ifdef CONFIG_VIDEO_M5MO //NAGSM_HQ_CAMERA_LEESUNGKOO_20101111
+	unsigned int initialized;
+#endif
 };
 
 #endif /* __CSIS_H */

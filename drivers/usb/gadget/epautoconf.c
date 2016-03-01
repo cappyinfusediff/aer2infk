@@ -128,13 +128,6 @@ ep_matches (
 		}
 	}
 
-	/*
-	 * If the protocol driver hasn't yet decided on wMaxPacketSize
-	 * and wants to know the maximum possible, provide the info.
-	 */
-	if (desc->wMaxPacketSize == 0)
-		desc->wMaxPacketSize = cpu_to_le16(ep->maxpacket);
-
 	/* endpoint maxpacket size is an input parameter, except for bulk
 	 * where it's an output parameter representing the full speed limit.
 	 * the usb spec fixes high speed bulk maxpacket at 512 bytes.
@@ -338,10 +331,6 @@ struct usb_ep *usb_ep_autoconfig (
 				return ep;
 			ep = find_ep (gadget, "ep13-bulk");
 			if (ep && ep_matches (gadget, ep, desc))
-				return ep;
-		} else if (USB_ENDPOINT_XFER_ISOC == type) {
-			ep = find_ep(gadget, "ep15-iso");
-			if (ep && ep_matches(gadget, ep, desc))
 				return ep;
 		}
 	}

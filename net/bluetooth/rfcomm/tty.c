@@ -727,9 +727,9 @@ static int rfcomm_tty_open(struct tty_struct *tty, struct file *filp)
 			break;
 		}
 
-		tty_unlock();
+		unlock_kernel();
 		schedule();
-		tty_lock();
+		lock_kernel();
 	}
 	set_current_state(TASK_RUNNING);
 	remove_wait_queue(&dev->wait, &wait);

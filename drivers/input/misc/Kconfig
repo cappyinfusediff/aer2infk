@@ -13,10 +13,11 @@ menuconfig INPUT_MISC
 if INPUT_MISC
 
 config GYRO_K3G
-	tristate "K3G driver for s5pc11x"
+	tristate "K3G driver for s5pc210"
+	depends on S5PC110_DEMPSEY_BOARD
 	default n
 	help
-	  This option enables gyro sensors using K3G driver
+	  This option enables gyro sensors using K3G driver.
 
 config INPUT_88PM860X_ONKEY
 	tristate "88PM860x ONKEY support"
@@ -27,16 +28,6 @@ config INPUT_88PM860X_ONKEY
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called 88pm860x_onkey.
-
-config INPUT_AB8500_PONKEY
-	tristate "AB8500 Pon (PowerOn) Key"
-	depends on AB8500_CORE
-	help
-	  Say Y here to use the PowerOn Key for ST-Ericsson's AB8500
-	  Mix-Sig PMIC.
-
-	  To compile this driver as a module, choose M here: the module
-	  will be called ab8500-ponkey.
 
 config INPUT_AD714X
 	tristate "Analog Devices AD714x Capacitance Touch Sensor"
@@ -71,18 +62,26 @@ config INPUT_AD714X_SPI
 config INPUT_BMA023
 	tristate "Bosch Sensortec BMA023 Acceleration Sensor"
 	depends on I2C
-
+	
 config INPUT_BMA222
 	tristate "Bosch Sensortec BMA222 Acceleration Sensor"
 	depends on I2C
 
-config INPUT_KR3DH
-        depends on I2C
-        tristate "KR3DH driver for s5pc11x"
-        help
-          This option enables accelerometer sensors using kr3dh driver.
-          It is optimized for s5pc11x.
-
+config INPUT_BMA222_POSITION
+	int "BMA222 Mounting Position on Board"
+	depends on INPUT_BMA222
+	default "3"
+	help
+	  Chip mounting position (pin 1).
+	    0: top, upper-left
+	    1: top, upper-right
+	    2: top, lower-right
+	    3: top, lower-left
+	    4: bottom, upper-left
+	    5: bottom, upper-right
+	    6: bottom, lower-right
+	    7: bottom, lower-left
+	    
 config INPUT_YAS529
 	tristate "Yamaha YAS529 Geomagnetic Sensor"
 	depends on I2C
@@ -90,7 +89,7 @@ config INPUT_YAS529
 config INPUT_YAS529_POSITION
 	int "YAS529 Mounting Position on Board"
 	depends on INPUT_YAS529
-	default "1"
+	default "2"
 	help
 	  Chip mounting position (pin 1).
 	    0: top, upper-left
@@ -105,13 +104,6 @@ config INPUT_YAS529_POSITION
 config INPUT_ORIENTATION
 	tristate "Yamaha Orientation Sensor"
 	depends on I2C
-
-config INPUT_YAMAHA
-	depends on I2C
-	tristate "YAMAHA"
-	help
-	  This option enables magnetic sensors using YAMAHA driver.
-	  It is optimized for s3c6410.
 
 config INPUT_PCSPKR
 	tristate "PC Speaker support"
@@ -356,6 +348,24 @@ config INPUT_SGI_BTNS
 	  To compile this driver as a module, choose M here: the
 	  module will be called sgi_btns.
 
+config INPUT_WINBOND_CIR
+	tristate "Winbond IR remote control"
+	depends on X86 && PNP
+	select NEW_LEDS
+	select LEDS_CLASS
+	select LEDS_TRIGGERS
+	select BITREVERSE
+	help
+	  Say Y here if you want to use the IR remote functionality found
+	  in some Winbond SuperI/O chips. Currently only the WPCD376I
+	  chip is supported (included in some Intel Media series motherboards).
+
+	  IR Receive and wake-on-IR from suspend and power-off is currently
+	  supported.
+
+	  To compile this driver as a module, choose M here: the module will be
+	  called winbond_cir.
+
 config INPUT_GPIO
 	tristate "GPIO driver support"
 	help
@@ -385,28 +395,6 @@ config INPUT_PCF8574
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called pcf8574_keypad.
-
-config INPUT_PWM_BEEPER
-	tristate "PWM beeper support"
-	depends on HAVE_PWM
-	help
-	  Say Y here to get support for PWM based beeper devices.
-
-	  If unsure, say N.
-
-	  To compile this driver as a module, choose M here: the module will be
-	  called pwm-beeper.
-
-config INPUT_PMIC8XXX_PWRKEY
-	tristate "PMIC8XXX power key support"
-	depends on MFD_PM8XXX
-	help
-	  Say Y here if you want support for the PMIC8XXX power key.
-
-	  If unsure, say N.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called pmic8xxx-pwrkey.
 
 config INPUT_GPIO_ROTARY_ENCODER
 	tristate "Rotary encoders connected to GPIO pins"
@@ -471,80 +459,6 @@ config INPUT_PCAP
 	  To compile this driver as a module, choose M here: the
 	  module will be called pcap_keys.
 
-config INPUT_ADXL34X
-	tristate "Analog Devices ADXL34x Three-Axis Digital Accelerometer"
-	default n
-	help
-	  Say Y here if you have a Accelerometer interface using the
-	  ADXL345/6 controller, and your board-specific initialization
-	  code includes that in its table of devices.
-
-	  This driver can use either I2C or SPI communication to the
-	  ADXL345/6 controller.  Select the appropriate method for
-	  your system.
-
-	  If unsure, say N (but it's safe to say "Y").
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called adxl34x.
-
-config INPUT_ADXL34X_I2C
-	tristate "support I2C bus connection"
-	depends on INPUT_ADXL34X && I2C
-	default y
-	help
-	  Say Y here if you have ADXL345/6 hooked to an I2C bus.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called adxl34x-i2c.
-
-config INPUT_ADXL34X_SPI
-	tristate "support SPI bus connection"
-	depends on INPUT_ADXL34X && SPI
-	default y
-	help
-	  Say Y here if you have ADXL345/6 hooked to a SPI bus.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called adxl34x-spi.
-
-config INPUT_CMA3000
-	tristate "VTI CMA3000 Tri-axis accelerometer"
-	help
-	  Say Y here if you want to use VTI CMA3000_D0x Accelerometer
-	  driver
-
-	  This driver currently only supports I2C interface to the
-	  controller. Also select the I2C method.
-
-	  If unsure, say N
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called cma3000_d0x.
-
-config INPUT_CMA3000_I2C
-	tristate "Support I2C bus connection"
-	depends on INPUT_CMA3000 && I2C
-	help
-	  Say Y here if you want to use VTI CMA3000_D0x Accelerometer
-	  through I2C interface.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called cma3000_d0x_i2c.
-
-config INPUT_XEN_KBDDEV_FRONTEND
-	tristate "Xen virtual keyboard and mouse support"
-	depends on XEN_FBDEV_FRONTEND
-	default y
-	select XEN_XENBUS_FRONTEND
-	help
-	  This driver implements the front-end of the Xen virtual
-	  keyboard and mouse device driver.  It communicates with a back-end
-	  in another domain.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called xen-kbdfront.
-
 config OPTICAL_GP2A
 	depends on I2C && GENERIC_GPIO
 	tristate "GP2A ambient light and proximity input device"
@@ -552,35 +466,40 @@ config OPTICAL_GP2A
 	help
 	  This option enables proximity & light sensors using gp2a driver.
 
-config INPUT_BMA020
-	depends on I2C
-	tristate "BMA020 driver for s5pc110"
+config OPTICAL_TAOS_TRITON
+	depends on I2C && GENERIC_GPIO
+	tristate "TAOS ambient light and proximity input device"
 	default n
 	help
-	  This option enables accelerometer sensors using bma020 driver.
+	  This option enables proximity & light sensors using taos driver.
+	  
+config OPTICAL_CAPELLA_TRITON
+	depends on  I2C && S5PC110_DEMPSEY_BOARD
+	tristate "CAPELLA triton driver for s5pc110"
+	default n
+	help
+	  CAPELLA
+	  
+	  
+config SENSORS_AK8975
+	tristate "AK8975 compass support"
+	default n
+	depends on I2C && S5PC110_DEMPSEY_BOARD
+	help
+	  If you say yes here you get support for Asahi Kasei's 
+	  orientation sensor AK8975.
 
-config INPUT_AK8973B
-	depends on I2C
-	tristate "AK8973B driver for s5pc11x"
-	default n
+config SENSORS_K3DH
+	tristate "K3DH acceleration sensor support"
+	depends on I2C && S5PC110_DEMPSEY_BOARD
+        default n
 	help
-	  This option enables magnetic sensors using ak8973b driver
-	  It is optimized for s5pc11x
+	  Driver for STMicroelectronic K3DH accelerometer.
 
-config INPUT_BH1721
-	depends on I2C
-	tristate "BH1721 driver for s5pc11x"
-	default n
-	help
-	  This option enables light sensors using BH1721 driver
-	  It is optimized for s5pc11x
 
-config INPUT_L3G4200D
-	depends on I2C
-	tristate "L3G4200D driver for s5pc11x"
-	default n
-	help
-	  This option enables gyro sensors using L3G4200D driver
-	  It is optimized for s5pc11x
+
+
+	  
+
 
 endif

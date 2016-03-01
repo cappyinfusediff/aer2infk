@@ -14,7 +14,6 @@
 #include "gigaset.h"
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
-#include <linux/ratelimit.h>
 #include <linux/isdn/capilli.h>
 #include <linux/isdn/capicmd.h>
 #include <linux/isdn/capiutil.h>
@@ -46,7 +45,6 @@
 #define CAPI_FACILITY_LI	0x0005
 
 #define CAPI_SUPPSVC_GETSUPPORTED	0x0000
-#define CAPI_SUPPSVC_LISTEN		0x0001
 
 /* missing from capiutil.h */
 #define CAPIMSG_PLCI_PART(m)	CAPIMSG_U8(m, 9)
@@ -223,13 +221,9 @@ get_appl(struct gigaset_capi_ctr *iif, u16 appl)
 static inline void dump_cmsg(enum debuglevel level, const char *tag, _cmsg *p)
 {
 #ifdef CONFIG_GIGASET_DEBUG
-	/* dump at most 20 messages in 20 secs */
-	static DEFINE_RATELIMIT_STATE(msg_dump_ratelimit, 20 * HZ, 20);
 	_cdebbuf *cdb;
 
 	if (!(gigaset_debuglevel & level))
-		return;
-	if (!___ratelimit(&msg_dump_ratelimit, tag))
 		return;
 
 	cdb = capi_cmsg2str(p);
@@ -263,8 +257,6 @@ static inline void dump_rawmsg(enum debuglevel level, const char *tag,
 		CAPIMSG_APPID(data), CAPIMSG_MSGID(data), l,
 		CAPIMSG_CONTROL(data));
 	l -= 12;
-	if (l <= 0)
-		return;
 	dbgline = kmalloc(3*l, GFP_ATOMIC);
 	if (!dbgline)
 		return;
@@ -278,13 +270,9 @@ static inline void dump_rawmsg(enum debuglevel level, const char *tag,
 	kfree(dbgline);
 	if (CAPIMSG_COMMAND(data) == CAPI_DATA_B3 &&
 	    (CAPIMSG_SUBCOMMAND(data) == CAPI_REQ ||
-	     CAPIMSG_SUBCOMMAND(data) == CAPI_IND)) {
+	     CAPIMSG_SUBCOMMAND(data) == CAPI_IND) &&
+	    CAPIMSG_DATALEN(data) > 0) {
 		l = CAPIMSG_DATALEN(data);
-		gig_dbg(level, "   DataLength=%d", l);
-		if (l <= 0 || !(gigaset_debuglevel & DEBUG_LLDATA))
-			return;
-		if (l > 64)
-			l = 64; /* arbitrary limit */
 		dbgline = kmalloc(3*l, GFP_ATOMIC);
 		if (!dbgline)
 			return;
@@ -467,7 +455,7 @@ void gigaset_skb_rcvd(struct bc_state *bcs, struct sk_buff *skb)
 	/* Data64 parameter not present */
 
 	/* emit message */
-	dump_rawmsg(DEBUG_MCMD, __func__, skb->data);
+	dump_rawmsg(DEBUG_LLDATA, "DATA_B3_IND", skb->data);
 	capi_ctr_handle_message(&iif->ctr, ap->id, skb);
 }
 EXPORT_SYMBOL_GPL(gigaset_skb_rcvd);
@@ -990,9 +978,6 @@ static void gigaset_register_appl(struct capi_ctr *ctr, u16 appl,
 	struct cardstate *cs = ctr->driverdata;
 	struct gigaset_capi_appl *ap;
 
-	gig_dbg(DEBUG_CMD, "%s [%u] l3cnt=%u blkcnt=%u blklen=%u",
-		__func__, appl, rp->level3cnt, rp->datablkcnt, rp->datablklen);
-
 	list_for_each_entry(ap, &iif->appls, ctrlist)
 		if (ap->id == appl) {
 			dev_notice(cs->dev,
@@ -1078,8 +1063,6 @@ static void gigaset_release_appl(struct capi_ctr *ctr, u16 appl)
 	struct gigaset_capi_appl *ap, *tmp;
 	unsigned ch;
 
-	gig_dbg(DEBUG_CMD, "%s [%u]", __func__, appl);
-
 	list_for_each_entry_safe(ap, tmp, &iif->appls, ctrlist)
 		if (ap->id == appl) {
 			/* remove from any channels */
@@ -1160,7 +1143,7 @@ static void do_facility_req(struct gigaset_capi_ctr *iif,
 	case CAPI_FACILITY_SUPPSVC:
 		/* decode Function parameter */
 		pparam = cmsg->FacilityRequestParameter;
-		if (pparam == NULL || pparam[0] < 2) {
+		if (pparam == NULL || *pparam < 2) {
 			dev_notice(cs->dev, "%s: %s missing\n", "FACILITY_REQ",
 				   "Facility Request Parameter");
 			send_conf(iif, ap, skb, CapiIllMessageParmCoding);
@@ -1177,32 +1160,8 @@ static void do_facility_req(struct gigaset_capi_ctr *iif,
 			/* Supported Services: none */
 			capimsg_setu32(confparam, 6, 0);
 			break;
-		case CAPI_SUPPSVC_LISTEN:
-			if (pparam[0] < 7 || pparam[3] < 4) {
-				dev_notice(cs->dev, "%s: %s missing\n",
-					   "FACILITY_REQ", "Notification Mask");
-				send_conf(iif, ap, skb,
-					  CapiIllMessageParmCoding);
-				return;
-			}
-			if (CAPIMSG_U32(pparam, 4) != 0) {
-				dev_notice(cs->dev,
-	"%s: unsupported supplementary service notification mask 0x%x\n",
-				   "FACILITY_REQ", CAPIMSG_U32(pparam, 4));
-				info = CapiFacilitySpecificFunctionNotSupported;
-				confparam[3] = 2;	/* length */
-				capimsg_setu16(confparam, 4,
-					CapiSupplementaryServiceNotSupported);
-			}
-			info = CapiSuccess;
-			confparam[3] = 2;	/* length */
-			capimsg_setu16(confparam, 4, CapiSuccess);
-			break;
 		/* ToDo: add supported services */
 		default:
-			dev_notice(cs->dev,
-		"%s: unsupported supplementary service function 0x%04x\n",
-				   "FACILITY_REQ", function);
 			info = CapiFacilitySpecificFunctionNotSupported;
 			/* Supplementary Service specific parameter */
 			confparam[3] = 2;	/* length */
@@ -1907,7 +1866,6 @@ static void do_disconnect_req(struct gigaset_capi_ctr *iif,
 		if (b3skb == NULL) {
 			dev_err(cs->dev, "%s: out of memory\n", __func__);
 			send_conf(iif, ap, skb, CAPI_MSGOSRESOURCEERR);
-			kfree(b3cmsg);
 			return;
 		}
 		capi_cmsg2message(b3cmsg,
@@ -1994,7 +1952,11 @@ static void do_data_b3_req(struct gigaset_capi_ctr *iif,
 	u16 handle = CAPIMSG_HANDLE_REQ(skb->data);
 
 	/* frequent message, avoid _cmsg overhead */
-	dump_rawmsg(DEBUG_MCMD, __func__, skb->data);
+	dump_rawmsg(DEBUG_LLDATA, "DATA_B3_REQ", skb->data);
+
+	gig_dbg(DEBUG_LLDATA,
+		"Receiving data from LL (ch: %d, flg: %x, sz: %d|%d)",
+		channel, flags, msglen, datalen);
 
 	/* check parameters */
 	if (channel == 0 || channel > cs->channels || ncci != 1) {
@@ -2065,6 +2027,12 @@ static void do_reset_b3_req(struct gigaset_capi_ctr *iif,
 }
 
 /*
+ * dump unsupported/ignored messages at most twice per minute,
+ * some apps send those very frequently
+ */
+static unsigned long ignored_msg_dump_time;
+
+/*
  * unsupported CAPI message handler
  */
 static void do_unsupported(struct gigaset_capi_ctr *iif,
@@ -2073,7 +2041,8 @@ static void do_unsupported(struct gigaset_capi_ctr *iif,
 {
 	/* decode message */
 	capi_message2cmsg(&iif->acmsg, skb->data);
-	dump_cmsg(DEBUG_CMD, __func__, &iif->acmsg);
+	if (printk_timed_ratelimit(&ignored_msg_dump_time, 30 * 1000))
+		dump_cmsg(DEBUG_CMD, __func__, &iif->acmsg);
 	send_conf(iif, ap, skb, CapiMessageNotSupportedInCurrentState);
 }
 
@@ -2084,9 +2053,11 @@ static void do_nothing(struct gigaset_capi_ctr *iif,
 		       struct gigaset_capi_appl *ap,
 		       struct sk_buff *skb)
 {
-	/* decode message */
-	capi_message2cmsg(&iif->acmsg, skb->data);
-	dump_cmsg(DEBUG_CMD, __func__, &iif->acmsg);
+	if (printk_timed_ratelimit(&ignored_msg_dump_time, 30 * 1000)) {
+		/* decode message */
+		capi_message2cmsg(&iif->acmsg, skb->data);
+		dump_cmsg(DEBUG_CMD, __func__, &iif->acmsg);
+	}
 	dev_kfree_skb_any(skb);
 }
 
@@ -2094,7 +2065,7 @@ static void do_data_b3_resp(struct gigaset_capi_ctr *iif,
 			    struct gigaset_capi_appl *ap,
 			    struct sk_buff *skb)
 {
-	dump_rawmsg(DEBUG_MCMD, __func__, skb->data);
+	dump_rawmsg(DEBUG_LLDATA, __func__, skb->data);
 	dev_kfree_skb_any(skb);
 }
 

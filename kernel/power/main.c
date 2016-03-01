@@ -21,6 +21,9 @@
 
 DEFINE_MUTEX(pm_mutex);
 
+unsigned int pm_flags;
+EXPORT_SYMBOL(pm_flags);
+
 #ifdef CONFIG_PM_SLEEP
 
 /* Routines for PM-transition notifications */
@@ -239,7 +242,7 @@ power_attr(state);
  * writing to 'state'.  It first should read from 'wakeup_count' and store
  * the read value.  Then, after carrying out its own preparations for the system
  * transition to a sleep state, it should write the stored value to
- * 'wakeup_count'.  If that fails, at least one wakeup event has occurred since
+ * 'wakeup_count'.  If that fails, at least one wakeup event has occured since
  * 'wakeup_count' was read and 'state' should not be written to.  Otherwise, it
  * is allowed to write to 'state', but the transition will be aborted if there
  * are any wakeup events detected after 'wakeup_count' was written to.
@@ -249,18 +252,18 @@ static ssize_t wakeup_count_show(struct kobject *kobj,
 				struct kobj_attribute *attr,
 				char *buf)
 {
-	unsigned int val;
+	unsigned long val;
 
-	return pm_get_wakeup_count(&val) ? sprintf(buf, "%u\n", val) : -EINTR;
+	return pm_get_wakeup_count(&val) ? sprintf(buf, "%lu\n", val) : -EINTR;
 }
 
 static ssize_t wakeup_count_store(struct kobject *kobj,
 				struct kobj_attribute *attr,
 				const char *buf, size_t n)
 {
-	unsigned int val;
+	unsigned long val;
 
-	if (sscanf(buf, "%u", &val) == 1) {
+	if (sscanf(buf, "%lu", &val) == 1) {
 		if (pm_save_wakeup_count(val))
 			return n;
 	}
@@ -293,29 +296,13 @@ pm_trace_store(struct kobject *kobj, struct kobj_attribute *attr,
 }
 
 power_attr(pm_trace);
-
-static ssize_t pm_trace_dev_match_show(struct kobject *kobj,
-				       struct kobj_attribute *attr,
-				       char *buf)
-{
-	return show_trace_dev_match(buf, PAGE_SIZE);
-}
-
-static ssize_t
-pm_trace_dev_match_store(struct kobject *kobj, struct kobj_attribute *attr,
-			 const char *buf, size_t n)
-{
-	return -EINVAL;
-}
-
-power_attr(pm_trace_dev_match);
-
 #endif /* CONFIG_PM_TRACE */
 
 #ifdef CONFIG_USER_WAKELOCK
 power_attr(wake_lock);
 power_attr(wake_unlock);
 #endif
+
 
 #ifdef CONFIG_DVFS_LIMIT
 //extern int g_dbs_timer_started;
@@ -358,9 +345,9 @@ static ssize_t dvfslock_ctrl(const char *buf, size_t count)
 		return -EINVAL;
 
 	if (dlevel)
-		dlevel = L1;
+		dlevel = L3;
 	else
-		dlevel = L0;
+		dlevel = L2;
 
 	printk(KERN_DEBUG "%s : level=%d, time=%d\n", __func__, dlevel, dtime_msec);
 
@@ -376,7 +363,7 @@ static ssize_t dvfslock_ctrl(const char *buf, size_t count)
 
 static void do_dvfsunlock_timer(struct work_struct *work)
 {
-	dvfsctrl_locked = 0;
+	dvfsctrl_locked = 0;	
 	s5pv210_unlock_dvfs_high_level(DVFS_LOCK_TOKEN_6);
 }
 
@@ -400,7 +387,6 @@ static struct attribute * g[] = {
 	&state_attr.attr,
 #ifdef CONFIG_PM_TRACE
 	&pm_trace_attr.attr,
-	&pm_trace_dev_match_attr.attr,
 #endif
 #ifdef CONFIG_PM_SLEEP
 	&pm_async_attr.attr,
@@ -429,7 +415,7 @@ EXPORT_SYMBOL_GPL(pm_wq);
 
 static int __init pm_start_workqueue(void)
 {
-	pm_wq = alloc_workqueue("pm", WQ_FREEZABLE, 0);
+	pm_wq = alloc_workqueue("pm", WQ_FREEZEABLE, 0);
 
 	return pm_wq ? 0 : -ENOMEM;
 }
@@ -443,7 +429,6 @@ static int __init pm_init(void)
 	if (error)
 		return error;
 	hibernate_image_size_init();
-	hibernate_reserved_size_init();
 	power_kobj = kobject_create_and_add("power", NULL);
 	if (!power_kobj)
 		return -ENOMEM;

@@ -39,10 +39,6 @@
 
 #define ID_BLOCK_SIZE			7
 
-// Accidental touch key prevention (see cypress-touchkey.c)
-unsigned int touch_state_val = 0;
-EXPORT_SYMBOL(touch_state_val);
-
 struct object_t {
 	u8 object_type;
 	u16 i2c_address;
@@ -304,9 +300,7 @@ err:
 static void report_input_data(struct mxt224_data *data)
 {
 	int i;
-	int num_fingers_down;
 
-	num_fingers_down = 0;
 	for (i = 0; i < data->num_fingers; i++) {
 		if (data->fingers[i].z == -1)
 			continue;
@@ -315,18 +309,18 @@ static void report_input_data(struct mxt224_data *data)
 					data->fingers[i].x);
 		input_report_abs(data->input_dev, ABS_MT_POSITION_Y,
 					data->fingers[i].y);
-		input_report_abs(data->input_dev, ABS_MT_PRESSURE,
-					data->fingers[i].z);
 		input_report_abs(data->input_dev, ABS_MT_TOUCH_MAJOR,
+					data->fingers[i].z);
+		input_report_abs(data->input_dev, ABS_MT_WIDTH_MAJOR,
 					data->fingers[i].w);
 		input_report_abs(data->input_dev, ABS_MT_TRACKING_ID, i);
 		input_mt_sync(data->input_dev);
-		num_fingers_down++;
+
+		if (data->fingers[i].z == 0)
+			data->fingers[i].z = -1;
 	}
 	data->finger_mask = 0;
 
-	if (num_fingers_down == 0)
-		input_mt_sync(data->input_dev);
 	input_sync(data->input_dev);
 }
 
@@ -350,10 +344,9 @@ static irqreturn_t mxt224_irq_thread(int irq, void *ptr)
 			report_input_data(data);
 
 		if (msg[1] & RELEASE_MSG_MASK) {
-			data->fingers[id].z = -1;
+			data->fingers[id].z = 0;
 			data->fingers[id].w = msg[5];
 			data->finger_mask |= 1U << id;
-			touch_state_val = 0;
 		} else if ((msg[1] & DETECT_MSG_MASK) && (msg[1] &
 				(PRESS_MSG_MASK | MOVE_MSG_MASK))) {
 			data->fingers[id].z = msg[6];
@@ -363,10 +356,9 @@ static irqreturn_t mxt224_irq_thread(int irq, void *ptr)
 			data->fingers[id].y = ((msg[3] << 4) |
 					(msg[4] & 0xF)) >> data->y_dropbits;
 			data->finger_mask |= 1U << id;
-			touch_state_val = 1;
 		} else if ((msg[1] & SUPPRESS_MSG_MASK) &&
 			   (data->fingers[id].z != -1)) {
-			data->fingers[id].z = -1;
+			data->fingers[id].z = 0;
 			data->fingers[id].w = msg[5];
 			data->finger_mask |= 1U << id;
 		} else {
@@ -392,10 +384,12 @@ static int mxt224_internal_suspend(struct mxt224_data *data)
 	if (ret)
 		return ret;
 
-	touch_state_val = 0;
 
-	for (i = 0; i < data->num_fingers; i++)
-		data->fingers[i].z = -1;
+	for (i = 0; i < data->num_fingers; i++) {
+		if (data->fingers[i].z == -1)
+			continue;
+		data->fingers[i].z = 0;
+	}
 	report_input_data(data);
 
 	data->power_off();
@@ -502,9 +496,9 @@ static int __devinit mxt224_probe(struct i2c_client *client,
 			pdata->max_x, 0, 0);
 	input_set_abs_params(input_dev, ABS_MT_POSITION_Y, pdata->min_y,
 			pdata->max_y, 0, 0);
-	input_set_abs_params(input_dev, ABS_MT_PRESSURE, pdata->min_z,
+	input_set_abs_params(input_dev, ABS_MT_TOUCH_MAJOR, pdata->min_z,
 			pdata->max_z, 0, 0);
-	input_set_abs_params(input_dev, ABS_MT_TOUCH_MAJOR, pdata->min_w,
+	input_set_abs_params(input_dev, ABS_MT_WIDTH_MAJOR, pdata->min_w,
 			pdata->max_w, 0, 0);
 	input_set_abs_params(input_dev, ABS_MT_TRACKING_ID, 0,
 			data->num_fingers - 1, 0, 0);

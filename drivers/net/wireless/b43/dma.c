@@ -80,7 +80,7 @@ static void op32_fill_descriptor(struct b43_dmaring *ring,
 	addr = (u32) (dmaaddr & ~SSB_DMA_TRANSLATION_MASK);
 	addrext = (u32) (dmaaddr & SSB_DMA_TRANSLATION_MASK)
 	    >> SSB_DMA_TRANSLATION_SHIFT;
-	addr |= ring->dev->dma.translation;
+	addr |= ssb_dma_translation(ring->dev->dev);
 	ctl = bufsize & B43_DMA32_DCTL_BYTECNT;
 	if (slot == ring->nr_slots - 1)
 		ctl |= B43_DMA32_DCTL_DTABLEEND;
@@ -174,7 +174,7 @@ static void op64_fill_descriptor(struct b43_dmaring *ring,
 	addrhi = (((u64) dmaaddr >> 32) & ~SSB_DMA_TRANSLATION_MASK);
 	addrext = (((u64) dmaaddr >> 32) & SSB_DMA_TRANSLATION_MASK)
 	    >> SSB_DMA_TRANSLATION_SHIFT;
-	addrhi |= (ring->dev->dma.translation << 1);
+	addrhi |= (ssb_dma_translation(ring->dev->dev) << 1);
 	if (slot == ring->nr_slots - 1)
 		ctl0 |= B43_DMA64_DCTL0_DTABLEEND;
 	if (start)
@@ -333,11 +333,11 @@ static inline
 	dma_addr_t dmaaddr;
 
 	if (tx) {
-		dmaaddr = dma_map_single(ring->dev->sdev->dma_dev,
-					 buf, len, DMA_TO_DEVICE);
+		dmaaddr = ssb_dma_map_single(ring->dev->dev,
+					     buf, len, DMA_TO_DEVICE);
 	} else {
-		dmaaddr = dma_map_single(ring->dev->sdev->dma_dev,
-					 buf, len, DMA_FROM_DEVICE);
+		dmaaddr = ssb_dma_map_single(ring->dev->dev,
+					     buf, len, DMA_FROM_DEVICE);
 	}
 
 	return dmaaddr;
@@ -348,11 +348,11 @@ static inline
 			  dma_addr_t addr, size_t len, int tx)
 {
 	if (tx) {
-		dma_unmap_single(ring->dev->sdev->dma_dev,
-				 addr, len, DMA_TO_DEVICE);
+		ssb_dma_unmap_single(ring->dev->dev,
+				     addr, len, DMA_TO_DEVICE);
 	} else {
-		dma_unmap_single(ring->dev->sdev->dma_dev,
-				 addr, len, DMA_FROM_DEVICE);
+		ssb_dma_unmap_single(ring->dev->dev,
+				     addr, len, DMA_FROM_DEVICE);
 	}
 }
 
@@ -361,7 +361,7 @@ static inline
 				 dma_addr_t addr, size_t len)
 {
 	B43_WARN_ON(ring->tx);
-	dma_sync_single_for_cpu(ring->dev->sdev->dma_dev,
+	ssb_dma_sync_single_for_cpu(ring->dev->dev,
 				    addr, len, DMA_FROM_DEVICE);
 }
 
@@ -370,8 +370,8 @@ static inline
 				    dma_addr_t addr, size_t len)
 {
 	B43_WARN_ON(ring->tx);
-	dma_sync_single_for_device(ring->dev->sdev->dma_dev,
-				   addr, len, DMA_FROM_DEVICE);
+	ssb_dma_sync_single_for_device(ring->dev->dev,
+				       addr, len, DMA_FROM_DEVICE);
 }
 
 static inline
@@ -401,9 +401,9 @@ static int alloc_ringmemory(struct b43_dmaring *ring)
 	 */
 	if (ring->type == B43_DMA_64BIT)
 		flags |= GFP_DMA;
-	ring->descbase = dma_alloc_coherent(ring->dev->sdev->dma_dev,
-					    B43_DMA_RINGMEMSIZE,
-					    &(ring->dmabase), flags);
+	ring->descbase = ssb_dma_alloc_consistent(ring->dev->dev,
+						  B43_DMA_RINGMEMSIZE,
+						  &(ring->dmabase), flags);
 	if (!ring->descbase) {
 		b43err(ring->dev->wl, "DMA ringmemory allocation failed\n");
 		return -ENOMEM;
@@ -415,8 +415,13 @@ static int alloc_ringmemory(struct b43_dmaring *ring)
 
 static void free_ringmemory(struct b43_dmaring *ring)
 {
-	dma_free_coherent(ring->dev->sdev->dma_dev, B43_DMA_RINGMEMSIZE,
-			  ring->descbase, ring->dmabase);
+	gfp_t flags = GFP_KERNEL;
+
+	if (ring->type == B43_DMA_64BIT)
+		flags |= GFP_DMA;
+
+	ssb_dma_free_consistent(ring->dev->dev, B43_DMA_RINGMEMSIZE,
+				ring->descbase, ring->dmabase, flags);
 }
 
 /* Reset the RX DMA channel */
@@ -523,7 +528,7 @@ static bool b43_dma_mapping_error(struct b43_dmaring *ring,
 				  dma_addr_t addr,
 				  size_t buffersize, bool dma_to_device)
 {
-	if (unlikely(dma_mapping_error(ring->dev->sdev->dma_dev, addr)))
+	if (unlikely(ssb_dma_mapping_error(ring->dev->dev, addr)))
 		return 1;
 
 	switch (ring->type) {
@@ -658,7 +663,7 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 	int err = 0;
 	u32 value;
 	u32 addrext;
-	u32 trans = ring->dev->dma.translation;
+	u32 trans = ssb_dma_translation(ring->dev->dev);
 
 	if (ring->tx) {
 		if (ring->type == B43_DMA_64BIT) {
@@ -869,10 +874,10 @@ struct b43_dmaring *b43_setup_dmaring(struct b43_wldev *dev,
 			goto err_kfree_meta;
 
 		/* test for ability to dma to txhdr_cache */
-		dma_test = dma_map_single(dev->sdev->dma_dev,
-					  ring->txhdr_cache,
-					  b43_txhdr_size(dev),
-					  DMA_TO_DEVICE);
+		dma_test = ssb_dma_map_single(dev->dev,
+					      ring->txhdr_cache,
+					      b43_txhdr_size(dev),
+					      DMA_TO_DEVICE);
 
 		if (b43_dma_mapping_error(ring, dma_test,
 					  b43_txhdr_size(dev), 1)) {
@@ -884,10 +889,10 @@ struct b43_dmaring *b43_setup_dmaring(struct b43_wldev *dev,
 			if (!ring->txhdr_cache)
 				goto err_kfree_meta;
 
-			dma_test = dma_map_single(dev->sdev->dma_dev,
-						  ring->txhdr_cache,
-						  b43_txhdr_size(dev),
-						  DMA_TO_DEVICE);
+			dma_test = ssb_dma_map_single(dev->dev,
+						      ring->txhdr_cache,
+						      b43_txhdr_size(dev),
+						      DMA_TO_DEVICE);
 
 			if (b43_dma_mapping_error(ring, dma_test,
 						  b43_txhdr_size(dev), 1)) {
@@ -898,9 +903,9 @@ struct b43_dmaring *b43_setup_dmaring(struct b43_wldev *dev,
 			}
 		}
 
-		dma_unmap_single(dev->sdev->dma_dev,
-				 dma_test, b43_txhdr_size(dev),
-				 DMA_TO_DEVICE);
+		ssb_dma_unmap_single(dev->dev,
+				     dma_test, b43_txhdr_size(dev),
+				     DMA_TO_DEVICE);
 	}
 
 	err = alloc_ringmemory(ring);
@@ -1013,12 +1018,9 @@ static int b43_dma_set_mask(struct b43_wldev *dev, u64 mask)
 	/* Try to set the DMA mask. If it fails, try falling back to a
 	 * lower mask, as we can always also support a lower one. */
 	while (1) {
-		err = dma_set_mask(dev->sdev->dma_dev, mask);
-		if (!err) {
-			err = dma_set_coherent_mask(dev->sdev->dma_dev, mask);
-			if (!err)
-				break;
-		}
+		err = ssb_dma_set_mask(dev->dev, mask);
+		if (!err)
+			break;
 		if (mask == DMA_BIT_MASK(64)) {
 			mask = DMA_BIT_MASK(32);
 			fallback = 1;
@@ -1055,7 +1057,6 @@ int b43_dma_init(struct b43_wldev *dev)
 	err = b43_dma_set_mask(dev, dmamask);
 	if (err)
 		return err;
-	dma->translation = ssb_dma_translation(dev->sdev);
 
 	err = -ENOMEM;
 	/* setup TX DMA channels. */
@@ -1085,7 +1086,7 @@ int b43_dma_init(struct b43_wldev *dev)
 		goto err_destroy_mcast;
 
 	/* No support for the TX status DMA ring. */
-	B43_WARN_ON(dev->sdev->id.revision < 5);
+	B43_WARN_ON(dev->dev->id.revision < 5);
 
 	b43dbg(dev->wl, "%u-bit DMA initialized\n",
 	       (unsigned int)type);
@@ -1220,14 +1221,14 @@ static int dma_tx_fragment(struct b43_dmaring *ring,
 	meta->dmaaddr = map_descbuffer(ring, skb->data, skb->len, 1);
 	/* create a bounce buffer in zone_dma on mapping failure. */
 	if (b43_dma_mapping_error(ring, meta->dmaaddr, skb->len, 1)) {
-		priv_info->bouncebuffer = kmemdup(skb->data, skb->len,
-						  GFP_ATOMIC | GFP_DMA);
+		priv_info->bouncebuffer = kmalloc(skb->len, GFP_ATOMIC | GFP_DMA);
 		if (!priv_info->bouncebuffer) {
 			ring->current_slot = old_top_slot;
 			ring->used_slots = old_used_slots;
 			err = -ENOMEM;
 			goto out_unmap_hdr;
 		}
+		memcpy(priv_info->bouncebuffer, skb->data, skb->len);
 
 		meta->dmaaddr = map_descbuffer(ring, priv_info->bouncebuffer, skb->len, 1);
 		if (b43_dma_mapping_error(ring, meta->dmaaddr, skb->len, 1)) {
@@ -1390,12 +1391,8 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
 	struct b43_dmaring *ring;
 	struct b43_dmadesc_generic *desc;
 	struct b43_dmadesc_meta *meta;
-	static const struct b43_txstatus fake; /* filled with 0 */
-	const struct b43_txstatus *txstat;
 	int slot, firstused;
 	bool frame_succeed;
-	int skip;
-	static u8 err_out1, err_out2;
 
 	ring = parse_cookie(dev, status->cookie, &slot);
 	if (unlikely(!ring))
@@ -1408,36 +1405,13 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
 	firstused = ring->current_slot - ring->used_slots + 1;
 	if (firstused < 0)
 		firstused = ring->nr_slots + firstused;
-
-	skip = 0;
 	if (unlikely(slot != firstused)) {
 		/* This possibly is a firmware bug and will result in
-		 * malfunction, memory leaks and/or stall of DMA functionality.
-		 */
-		if (slot == next_slot(ring, next_slot(ring, firstused))) {
-			/* If a single header/data pair was missed, skip over
-			 * the first two slots in an attempt to recover.
-			 */
-			slot = firstused;
-			skip = 2;
-			if (!err_out1) {
-				/* Report the error once. */
-				b43dbg(dev->wl,
-				       "Skip on DMA ring %d slot %d.\n",
-				       ring->index, slot);
-				err_out1 = 1;
-			}
-		} else {
-			/* More than a single header/data pair were missed.
-			 * Report this error once.
-			 */
-			if (!err_out2)
-				b43dbg(dev->wl,
-				       "Out of order TX status report on DMA ring %d. Expected %d, but got %d\n",
-				       ring->index, firstused, slot);
-			err_out2 = 1;
-			return;
-		}
+		 * malfunction, memory leaks and/or stall of DMA functionality. */
+		b43dbg(dev->wl, "Out of order TX status report on DMA ring %d. "
+		       "Expected %d, but got %d\n",
+		       ring->index, firstused, slot);
+		return;
 	}
 
 	ops = ring->ops;
@@ -1451,13 +1425,11 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
 			       slot, firstused, ring->index);
 			break;
 		}
-
 		if (meta->skb) {
 			struct b43_private_tx_info *priv_info =
-			     b43_get_priv_tx_info(IEEE80211_SKB_CB(meta->skb));
+				b43_get_priv_tx_info(IEEE80211_SKB_CB(meta->skb));
 
-			unmap_descbuffer(ring, meta->dmaaddr,
-					 meta->skb->len, 1);
+			unmap_descbuffer(ring, meta->dmaaddr, meta->skb->len, 1);
 			kfree(priv_info->bouncebuffer);
 			priv_info->bouncebuffer = NULL;
 		} else {
@@ -1469,9 +1441,8 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
 			struct ieee80211_tx_info *info;
 
 			if (unlikely(!meta->skb)) {
-				/* This is a scatter-gather fragment of a frame,
-				 * so the skb pointer must not be NULL.
-				 */
+				/* This is a scatter-gather fragment of a frame, so
+				 * the skb pointer must not be NULL. */
 				b43dbg(dev->wl, "TX status unexpected NULL skb "
 				       "at slot %d (first=%d) on ring %d\n",
 				       slot, firstused, ring->index);
@@ -1482,18 +1453,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
 
 			/*
 			 * Call back to inform the ieee80211 subsystem about
-			 * the status of the transmission. When skipping over
-			 * a missed TX status report, use a status structure
-			 * filled with zeros to indicate that the frame was not
-			 * sent (frame_count 0) and not acknowledged
+			 * the status of the transmission.
 			 */
-			if (unlikely(skip))
-				txstat = &fake;
-			else
-				txstat = status;
-
-			frame_succeed = b43_fill_txstatus_report(dev, info,
-								 txstat);
+			frame_succeed = b43_fill_txstatus_report(dev, info, status);
 #ifdef CONFIG_B43_DEBUG
 			if (frame_succeed)
 				ring->nr_succeed_tx_packets++;
@@ -1521,14 +1483,12 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
 		/* Everything unmapped and free'd. So it's not used anymore. */
 		ring->used_slots--;
 
-		if (meta->is_last_fragment && !skip) {
+		if (meta->is_last_fragment) {
 			/* This is the last scatter-gather
 			 * fragment of the frame. We are done. */
 			break;
 		}
 		slot = next_slot(ring, slot);
-		if (skip > 0)
-			--skip;
 	}
 	if (ring->stopped) {
 		B43_WARN_ON(free_slots(ring) < TX_SLOTS_PER_FRAME);

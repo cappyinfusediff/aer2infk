@@ -286,7 +286,6 @@ static void scsi_host_dev_release(struct device *dev)
 {
 	struct Scsi_Host *shost = dev_to_shost(dev);
 	struct device *parent = dev->parent;
-	struct request_queue *q;
 
 	scsi_proc_hostdir_rm(shost->hostt);
 
@@ -294,11 +293,9 @@ static void scsi_host_dev_release(struct device *dev)
 		kthread_stop(shost->ehandler);
 	if (shost->work_q)
 		destroy_workqueue(shost->work_q);
-	q = shost->uspace_req_q;
-	if (q) {
-		kfree(q->queuedata);
-		q->queuedata = NULL;
-		scsi_free_queue(q);
+	if (shost->uspace_req_q) {
+		kfree(shost->uspace_req_q->queuedata);
+		scsi_free_queue(shost->uspace_req_q);
 	}
 
 	scsi_destroy_command_freelist(shost);
@@ -334,6 +331,7 @@ struct Scsi_Host *scsi_host_alloc(struct scsi_host_template *sht, int privsize)
 {
 	struct Scsi_Host *shost;
 	gfp_t gfp_mask = GFP_KERNEL;
+	int rval;
 
 	if (sht->unchecked_isa_dma && privsize)
 		gfp_mask |= __GFP_DMA;
@@ -415,7 +413,9 @@ struct Scsi_Host *scsi_host_alloc(struct scsi_host_template *sht, int privsize)
 
 	device_initialize(&shost->shost_gendev);
 	dev_set_name(&shost->shost_gendev, "host%d", shost->host_no);
+#ifndef CONFIG_SYSFS_DEPRECATED
 	shost->shost_gendev.bus = &scsi_bus_type;
+#endif
 	shost->shost_gendev.type = &scsi_host_type;
 
 	device_initialize(&shost->shost_dev);
@@ -427,8 +427,7 @@ struct Scsi_Host *scsi_host_alloc(struct scsi_host_template *sht, int privsize)
 	shost->ehandler = kthread_run(scsi_error_handler, shost,
 			"scsi_eh_%d", shost->host_no);
 	if (IS_ERR(shost->ehandler)) {
-		printk(KERN_WARNING "scsi%d: error handler thread failed to spawn, error = %ld\n",
-			shost->host_no, PTR_ERR(shost->ehandler));
+		rval = PTR_ERR(shost->ehandler);
 		goto fail_kfree;
 	}
 

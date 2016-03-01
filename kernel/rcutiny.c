@@ -35,7 +35,6 @@
 #include <linux/init.h>
 #include <linux/time.h>
 #include <linux/cpu.h>
-#include <linux/prefetch.h>
 
 /* Controls for rcu_kthread() kthread, replacing RCU_SOFTIRQ used previously. */
 static struct task_struct *rcu_kthread_task;
@@ -181,7 +180,7 @@ static void rcu_process_callbacks(struct rcu_ctrlblk *rcp)
 		prefetch(next);
 		debug_rcu_head_unqueue(list);
 		local_bh_disable();
-		__rcu_reclaim(list);
+		list->func(list);
 		local_bh_enable();
 		list = next;
 		RCU_TRACE(cb_count++);

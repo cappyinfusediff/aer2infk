@@ -60,7 +60,6 @@
 #include <linux/gfp.h>
 #include <linux/dmaengine.h>
 #include <linux/dma-mapping.h>
-#include <linux/prefetch.h>
 #include "registers.h"
 #include "hw.h"
 #include "dma.h"
@@ -949,7 +948,7 @@ static int __devinit ioat_xor_val_self_test(struct ioatdma_device *device)
 			goto free_resources;
 		}
 	}
-	dma_sync_single_for_device(dev, dest_dma, PAGE_SIZE, DMA_FROM_DEVICE);
+	dma_sync_single_for_device(dev, dest_dma, PAGE_SIZE, DMA_TO_DEVICE);
 
 	/* skip validate if the capability is not present */
 	if (!dma_has_cap(DMA_XOR_VAL, dma_chan->device->cap_mask))

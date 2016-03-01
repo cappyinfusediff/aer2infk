@@ -80,7 +80,7 @@ void end_swap_bio_read(struct bio *bio, int err)
 				imajor(bio->bi_bdev->bd_inode),
 				iminor(bio->bi_bdev->bd_inode),
 				(unsigned long long)bio->bi_sector);
-		goto out;
+	goto out;
 	}
 
 	SetPageUptodate(page);
@@ -148,7 +148,7 @@ int swap_writepage(struct page *page, struct writeback_control *wbc)
 		goto out;
 	}
 	if (wbc->sync_mode == WB_SYNC_ALL)
-		rw |= REQ_SYNC;
+		rw |= REQ_SYNC | REQ_UNPLUG;
 	count_vm_event(PSWPOUT);
 	set_page_writeback(page);
 	unlock_page(page);

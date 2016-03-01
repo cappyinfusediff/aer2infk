@@ -10,9 +10,8 @@
  * published by the Free Software Foundation.
 */
 
-#include <linux/err.h>
-#include <linux/memblock.h>
 #include <linux/mm.h>
+#include <linux/bootmem.h>
 #include <linux/swap.h>
 #include <asm/setup.h>
 #include <linux/io.h>
@@ -91,12 +90,11 @@ dma_addr_t s5p_get_media_membase_bank(int bank)
 }
 EXPORT_SYMBOL(s5p_get_media_membase_bank);
 
-void s5p_reserve_bootmem(struct s5p_media_device *mdevs,
-			 int nr_mdevs, size_t boundary)
+void s5p_reserve_bootmem(struct s5p_media_device *mdevs,int nr_mdevs)
 {
 	struct s5p_media_device *mdev;
-	u64 start, end;
-	int i, ret;
+	int i;
+	dma_addr_t mfc_paddr;
 
 	media_devs = mdevs;
 	nr_media_devs = nr_mdevs;
@@ -109,29 +107,30 @@ void s5p_reserve_bootmem(struct s5p_media_device *mdevs,
 		if (mdev->memsize <= 0)
 			continue;
 
-		if (!mdev->paddr) {
-			start = meminfo.bank[mdev->bank].start;
-			end = start + meminfo.bank[mdev->bank].size;
+		if (!strcmp(mdev->name, "jpeg"))
+			mdev->paddr = mfc_paddr;
+		else
 
-			if (boundary && (boundary < end - start))
-				start = end - boundary;
-
-			mdev->paddr = memblock_find_in_range(start, end,
-						mdev->memsize, PAGE_SIZE);
-		}
-
-		ret = memblock_remove(mdev->paddr, mdev->memsize);
-		if (ret < 0)
-			pr_err("memblock_reserve(%x, %x) failed\n",
-				mdev->paddr, mdev->memsize);
+		if (mdev->paddr)
+			mdev->paddr = virt_to_phys(__alloc_bootmem(
+				mdev->memsize,
+				PAGE_SIZE,
+				mdev->paddr));
+		else
+			mdev->paddr = virt_to_phys(__alloc_bootmem(
+				mdev->memsize,
+				PAGE_SIZE,
+				meminfo.bank[mdev->bank].start));
 
 		if (media_base[mdev->bank] > mdev->paddr)
 			media_base[mdev->bank] = mdev->paddr;
 
-		printk(KERN_INFO "s5p: %lu bytes system memory reserved "
-			"for %s at 0x%08x, %d-bank base(0x%08x)\n",
-			(unsigned long) mdev->memsize, mdev->name, mdev->paddr,
-			mdev->bank, media_base[mdev->bank]);
+		if (!strcmp(mdev->name, "mfc") && mdev->bank == 0)
+			mfc_paddr = mdev->paddr;
+
+		printk(KERN_INFO "s5pv210: %lu bytes system memory reserved "
+			"for %s at 0x%08x\n", (unsigned long) mdev->memsize,
+			mdev->name, mdev->paddr);
 	}
 }
 

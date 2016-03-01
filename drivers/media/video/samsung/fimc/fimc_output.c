@@ -101,11 +101,7 @@ int fimc_outdev_stop_streaming(struct fimc_control *ctrl, struct fimc_ctx *ctx)
 		break;
 	case FIMC_OVLY_NONE_SINGLE_BUF:		/* fall through */
 	case FIMC_OVLY_NONE_MULTI_BUF:
-#if defined (CONFIG_MACH_ARIES) && !defined (CONFIG_SAMSUNG_YPG1)
-		if (ctx->status == FIMC_STREAMON_IDLE)
-#else // CONFIG_MACH_P1/CONFIG_SAMSUNG_YPG1
 		if (ctx->status <= FIMC_READY_ON || ctx->status == FIMC_STREAMON_IDLE)
-#endif
 			ctx->status = FIMC_STREAMOFF;
 		else
 			ctx->status = FIMC_READY_OFF;
@@ -127,25 +123,17 @@ int fimc_outdev_stop_streaming(struct fimc_control *ctrl, struct fimc_ctx *ctx)
 
 int fimc_outdev_resume_dma(struct fimc_control *ctrl, struct fimc_ctx *ctx)
 {
-	struct v4l2_rect fimd_rect;
 	struct fb_var_screeninfo var;
 	struct fb_info *fbinfo;
 	struct s3cfb_window *win;
+	struct v4l2_rect fimd_rect;
 	int ret = -1, idx;
-#if defined(CONFIG_VIDEO_NM6XX)
-	struct fimc_global *fimc = get_fimc_dev();
-#endif
 
 	fbinfo = registered_fb[ctx->overlay.fb_id];
 	win = (struct s3cfb_window *)fbinfo->par;
+	fimc_fimd_rect(ctrl, ctx, &fimd_rect);
 
 	memcpy(&var, &fbinfo->var, sizeof(struct fb_var_screeninfo));
-	memset(&fimd_rect, 0, sizeof(struct v4l2_rect));
-	ret = fimc_fimd_rect(ctrl, ctx, &fimd_rect);
-	if (ret < 0) {
-		fimc_err("fimc_fimd_rect fail\n");
-		return -EINVAL;
-	}
 
 	/* set window path & owner */
 	win->path = DATA_PATH_DMA;
@@ -153,25 +141,9 @@ int fimc_outdev_resume_dma(struct fimc_control *ctrl, struct fimc_ctx *ctx)
 	win->other_mem_addr = ctx->dst[1].base[FIMC_ADDR_Y];
 	win->other_mem_size = ctx->dst[1].length[FIMC_ADDR_Y];
 
-#if defined (CONFIG_MACH_ARIES) && !defined (CONFIG_SAMSUNG_YPG1)
-	/* Update WIN size */
-	var.xres_virtual = fimd_rect.width;
-	var.yres_virtual = fimd_rect.height;
-#endif
-#if defined(CONFIG_VIDEO_NM6XX)
-	if (fimc->active_camera == CAMERA_ID_MOBILETV)
-	{
-		var.xres = 1024;
-		var.yres = 600;
-	}
-	else
-#endif
-	{
-		var.xres = fimd_rect.width;
-		var.yres = fimd_rect.height;
-	}
+	var.xres = fimd_rect.width;
+	var.yres = fimd_rect.height;
 
-	/* Update WIN position */
 	win->x = fimd_rect.left;
 	win->y = fimd_rect.top;
 
@@ -317,7 +289,7 @@ static int fimc_outdev_set_src_buf(struct fimc_control *ctrl,
 
 	return 0;
 }
-#if defined (CONFIG_MACH_P1) || defined (CONFIG_SAMSUNG_YPG1)
+
 static void fimc_outdev_clear_dst_buf(struct fimc_control *ctrl,
 				   struct fimc_ctx *ctx, int index)
 {
@@ -337,15 +309,13 @@ static void fimc_outdev_clear_dst_buf(struct fimc_control *ctrl,
 		fimc_warn("%s: Failed to clear destination buffers\n",
 					__func__);
 }
-#endif
+
 static int fimc_outdev_set_dst_buf(struct fimc_control *ctrl,
 				   struct fimc_ctx *ctx)
 {
 	dma_addr_t *curr = &ctrl->mem.curr;
 	dma_addr_t end;
-#if defined (CONFIG_MACH_P1) || defined (CONFIG_SAMSUNG_YPG1)
 	void *dst_mem = NULL;
-#endif
 	u32 width = ctrl->fb.lcd_hres;
 	u32 height = ctrl->fb.lcd_vres;
 	u32 i, size;
@@ -354,10 +324,11 @@ static int fimc_outdev_set_dst_buf(struct fimc_control *ctrl,
 	size = PAGE_ALIGN(width * height * 4);
 
 	if ((*curr + (size * FIMC_OUTBUFS)) > end) {
-		fimc_err("%s: Reserved memory is not sufficient\n", __func__);
+		fimc_err("%s: Reserved memory is not sufficient\n",
+					__func__);
 		return -EINVAL;
 	}
-#if defined (CONFIG_MACH_P1) || defined (CONFIG_SAMSUNG_YPG1)
+
 	if (ctx->dst[0].base[FIMC_ADDR_Y]) {
 		fimc_warn("%s: already allocated destination buffers\n",
 					__func__);
@@ -372,7 +343,7 @@ static int fimc_outdev_set_dst_buf(struct fimc_control *ctrl,
 	} else
 		fimc_warn("%s: Failed to clear destination buffers\n",
 					__func__);
-#endif
+
 	/* Initialize destination buffer addr */
 	for (i = 0; i < FIMC_OUTBUFS; i++) {
 		ctx->dst[i].base[FIMC_ADDR_Y] = *curr;
@@ -752,9 +723,6 @@ static void fimc_outdev_set_dst_dma_offset(struct fimc_control *ctrl,
 	struct v4l2_rect bound, win;
 	struct v4l2_rect *w = &ctx->win.w;
 	u32 pixfmt = ctx->fbuf.fmt.pixelformat;
-#if defined(CONFIG_VIDEO_NM6XX)
-	struct fimc_global *fimc = get_fimc_dev();
-#endif
 
 	memset(&bound, 0, sizeof(bound));
 	memset(&win, 0, sizeof(win));
@@ -806,21 +774,18 @@ static void fimc_outdev_set_dst_dma_offset(struct fimc_control *ctrl,
 	}
 
 	switch (ctx->overlay.mode) {
-	case FIMC_OVLY_DMA_AUTO: // fall through for aries
-#if defined(CONFIG_VIDEO_NM6XX)
-		if(fimc->active_camera != CAMERA_ID_MOBILETV)
-		{
-			win.left = 0;
-			win.top = 0;
-		}
+	case FIMC_OVLY_DMA_AUTO:
+		win.left = 0;
+		win.top = 0;
 		fimc_hwset_output_offset(ctrl, pixfmt, &bound, &win);
 		break;
-#endif
+
 	case FIMC_OVLY_DMA_MANUAL:
 		memset(&bound, 0, sizeof(bound));
 		memset(&win, 0, sizeof(win));
 		fimc_hwset_output_offset(ctrl, pixfmt, &bound, &win);
 		break;
+
 	default:
 		fimc_hwset_output_offset(ctrl, pixfmt, &bound, &win);
 		break;
@@ -909,9 +874,7 @@ static int fimc_outdev_set_dst_dma_size(struct fimc_control *ctrl,
 	switch (ctx->overlay.mode) {
 	case FIMC_OVLY_NONE_MULTI_BUF:	/* fall through */
 	case FIMC_OVLY_NONE_SINGLE_BUF:
-#if defined (CONFIG_MACH_P1) || defined (CONFIG_SAMSUNG_YPG1)
 	case FIMC_OVLY_DMA_AUTO:
-#endif
 		real.width = ctx->win.w.width;
 		real.height = ctx->win.w.height;
 
@@ -934,9 +897,6 @@ static int fimc_outdev_set_dst_dma_size(struct fimc_control *ctrl,
 		break;
 
 	case FIMC_OVLY_DMA_MANUAL:	/* fall through */
-#if defined (CONFIG_MACH_ARIES) && !defined (CONFIG_SAMSUNG_YPG1)
-	case FIMC_OVLY_DMA_AUTO:
-#endif
 		real.width = ctx->win.w.width;
 		real.height = ctx->win.w.height;
 
@@ -1311,7 +1271,6 @@ int fimc_reqbufs_output(void *fh, struct v4l2_requestbuffers *b)
 						__func__, i, buf->vir_addr[i]);
 				}
 			}
-#if defined (CONFIG_MACH_P1) || defined (CONFIG_SAMSUNG_YPG1)
 
 			/* clear destination buffer address */
 			ctrl->mem.curr = ctx->dst[0].base[FIMC_ADDR_Y];
@@ -1323,7 +1282,6 @@ int fimc_reqbufs_output(void *fh, struct v4l2_requestbuffers *b)
 				ctx->dst[i].base[FIMC_ADDR_CR] = 0;
 				ctx->dst[i].length[FIMC_ADDR_CR] = 0;
 			}
-#endif
 			break;
 		default:
 			break;
@@ -1336,22 +1294,18 @@ int fimc_reqbufs_output(void *fh, struct v4l2_requestbuffers *b)
 			if (ret)
 				return ret;
 		} else if (b->memory == V4L2_MEMORY_USERPTR) {
-#if defined (CONFIG_MACH_ARIES) && !defined (CONFIG_SAMSUNG_YPG1)
-			if (mode == FIMC_OVLY_DMA_AUTO)
-#else // CONFIG_MACH_P1/CONFIG_SAMSUNG_YPG1
 			if (mode == FIMC_OVLY_DMA_AUTO ||
 					mode == FIMC_OVLY_NOT_FIXED)
-#endif
 				ctx->overlay.req_idx = FIMC_USERPTR_IDX;
 		}
-#if defined (CONFIG_MACH_P1) || defined (CONFIG_SAMSUNG_YPG1)
+
 		/* initialize destination buffers */
 		if (mode == FIMC_OVLY_DMA_AUTO || mode == FIMC_OVLY_NOT_FIXED) {
 			ret = fimc_outdev_set_dst_buf(ctrl, ctx);
 			if (ret)
 				return ret;
 		}
-#endif
+
 		ctx->is_requested = 1;
 	}
 
@@ -1750,15 +1704,6 @@ int fimc_streamon_output(void *fh)
 	if (ctx->overlay.mode == FIMC_OVLY_NOT_FIXED)
 		ctx->overlay.mode = FIMC_OVLY_MODE;
 
-#if defined (CONFIG_MACH_ARIES) && !defined (CONFIG_SAMSUNG_YPG1)
-	/* initialize destination buffers */
-	if (ctx->overlay.mode == FIMC_OVLY_DMA_AUTO) {
-		ret = fimc_outdev_set_dst_buf(ctrl, ctx);
-		if (ret)
-			return ret;
-	}
-#endif
-
 	ret = fimc_outdev_check_param(ctrl, ctx);
 	if (ret < 0) {
 		fimc_err("Fail: fimc_outdev_check_param\n");
@@ -1820,22 +1765,6 @@ int fimc_streamoff_output(void *fh)
 
 	if (ctrl->out->last_ctx == ctx->ctx_num)
 		ctrl->out->last_ctx = -1;
-#if defined (CONFIG_MACH_ARIES) && !defined (CONFIG_SAMSUNG_YPG1)
-	if (ctx->overlay.mode == FIMC_OVLY_DMA_AUTO) {
-		ctrl->mem.curr = ctx->dst[0].base[FIMC_ADDR_Y];
-
-		for (i = 0; i < FIMC_OUTBUFS; i++) {
-			ctx->dst[i].base[FIMC_ADDR_Y] = 0;
-			ctx->dst[i].length[FIMC_ADDR_Y] = 0;
-
-			ctx->dst[i].base[FIMC_ADDR_CB] = 0;
-			ctx->dst[i].length[FIMC_ADDR_CB] = 0;
-
-			ctx->dst[i].base[FIMC_ADDR_CR] = 0;
-			ctx->dst[i].length[FIMC_ADDR_CR] = 0;
-		}
-	}
-#endif
 
 	/* check all ctx to change ctrl->status from streamon to streamoff */
 	for (i = 0; i < FIMC_MAX_CTXS; i++) {
@@ -1853,7 +1782,8 @@ int fimc_streamoff_output(void *fh)
 		ctrl->out->last_ctx = -1;
 
 	mutex_lock(&ctrl->lock);
-	if (ctx->overlay.mode == FIMC_OVLY_DMA_AUTO && ctrl->fb.is_enable == 1) {
+	if (ctx->overlay.mode == FIMC_OVLY_DMA_AUTO &&
+				ctrl->fb.is_enable == 1) {
 		fimc_info2("WIN_OFF for FIMC%d\n", ctrl->id);
 		ret = fb_blank(registered_fb[ctx->overlay.fb_id],
 						FB_BLANK_POWERDOWN);
@@ -1887,7 +1817,8 @@ int fimc_output_set_dst_addr(struct fimc_control *ctrl,
 	memset(&buf_set, 0x00, sizeof(buf_set));
 
 	if (V4L2_PIX_FMT_NV12T == format)
-		fimc_get_nv12t_size(width, height, &y_size, &c_size, ctx->rotate);
+		fimc_get_nv12t_size(width, height, &y_size, &c_size,
+				ctx->rotate);
 
 	switch (format) {
 	case V4L2_PIX_FMT_RGB32:
@@ -2015,52 +1946,27 @@ static int fimc_qbuf_output_dma_auto(struct fimc_control *ctrl,
 	struct fb_var_screeninfo var;
 	struct fb_info *fbinfo;
 	struct s3cfb_window *win;
-	struct v4l2_rect fimd_rect;
 	struct fimc_buf_set buf_set;	/* destination addr */
+	struct v4l2_rect fimd_rect;
 	int ret = -1, i;
-#if defined(CONFIG_VIDEO_NM6XX)
-	struct fimc_global *fimc = get_fimc_dev();
-#endif
 
 	switch (ctx->status) {
 	case FIMC_READY_ON:
 		fbinfo = registered_fb[ctx->overlay.fb_id];
 		win = (struct s3cfb_window *)fbinfo->par;
+		fimc_fimd_rect(ctrl, ctx, &fimd_rect);
 
 		memcpy(&var, &fbinfo->var, sizeof(struct fb_var_screeninfo));
-		memset(&fimd_rect, 0, sizeof(struct v4l2_rect));
-		ret = fimc_fimd_rect(ctrl, ctx, &fimd_rect);
-		if (ret < 0) {
-			fimc_err("fimc_fimd_rect fail\n");
-			return -EINVAL;
-		}
 
 		/* set window path & owner */
 		win->path = DATA_PATH_DMA;
 		win->owner = DMA_MEM_OTHER;
-		win->other_mem_addr = ctx->dst[1].base[FIMC_ADDR_Y];
-		win->other_mem_size = ctx->dst[1].length[FIMC_ADDR_Y];
+		win->other_mem_addr = ctx->dst[FIMC_OUTBUFS-1].base[FIMC_ADDR_Y];
+		win->other_mem_size = ctx->dst[FIMC_OUTBUFS-1].length[FIMC_ADDR_Y];
 
-#if defined (CONFIG_MACH_ARIES) && !defined (CONFIG_SAMSUNG_YPG1)
-		/* Update WIN size */
-		var.xres_virtual = fimd_rect.width;
-		var.yres_virtual = fimd_rect.height;
-#endif
+		var.xres = fimd_rect.width;
+		var.yres = fimd_rect.height;
 
-#if defined(CONFIG_VIDEO_NM6XX)
-		if(fimc->active_camera == CAMERA_ID_MOBILETV)
-		{
-			var.xres = 1024;
-			var.yres = 600;
-		}
-		else
-#endif
-		{
-			var.xres = fimd_rect.width;
-			var.yres = fimd_rect.height;
-		}
-
-		/* Update WIN position */
 		win->x = fimd_rect.left;
 		win->y = fimd_rect.top;
 
@@ -2071,7 +1977,6 @@ static int fimc_qbuf_output_dma_auto(struct fimc_control *ctrl,
 			return -EINVAL;
 		}
 
-#if defined (CONFIG_MACH_P1) || defined (CONFIG_SAMSUNG_YPG1)
 		mutex_lock(&ctrl->lock);
 		if (ctx->overlay.mode == FIMC_OVLY_DMA_AUTO &&
 				ctrl->fb.is_enable == 0) {
@@ -2086,8 +1991,6 @@ static int fimc_qbuf_output_dma_auto(struct fimc_control *ctrl,
 			ctrl->fb.is_enable = 1;
 		}
 		mutex_unlock(&ctrl->lock);
-#endif
-		/* fall through */
 
 	case FIMC_STREAMON_IDLE:
 		fimc_outdev_set_src_addr(ctrl, ctx->src[idx].base);
@@ -2205,28 +2108,30 @@ int fimc_qbuf_output(void *fh, struct v4l2_buffer *b)
 		return -EINVAL;
 	}
 
+	mutex_lock(&ctrl->out->lock_fimc_out);
+	
 	if ((ctrl->status == FIMC_READY_ON) ||
 	    (ctrl->status == FIMC_STREAMON_IDLE)) {
 		ret = fimc_pop_inq(ctrl, &ctx_num, &idx);
 		if (ret < 0) {
 			fimc_err("Fail: fimc_pop_inq\n");
-			return -EINVAL;
+			//return -EINVAL; //added patch
+			ret = -EINVAL; //added patch
+			goto qbuf_output_end; //added patch
 		}
 
 		fimc_clk_en(ctrl, true);
 
 		ctx = &ctrl->out->ctx[ctx_num];
-#if defined (CONFIG_MACH_ARIES) && !defined (CONFIG_SAMSUNG_YPG1)
-		if (ctx_num != ctrl->out->last_ctx) {
-#else // CONFIG_MACH_P1/CONFIG_SAMSUNG_YPG1
 		if ((ctx->overlay.mode == FIMC_OVLY_NONE_SINGLE_BUF) ||
 				(ctx->overlay.mode != FIMC_OVLY_NONE_SINGLE_BUF
 				 && ctx_num != ctrl->out->last_ctx)) {
-#endif
 			ret = fimc_outdev_set_ctx_param(ctrl, ctx);
 			if (ret < 0) {
 				fimc_err("Fail: fimc_outdev_set_ctx_param\n");
-				return -EINVAL;
+				//return -EINVAL; //added patch
+				ret = -EINVAL; //added patch
+				goto qbuf_output_end; //added patch
 			}
 			ctrl->out->last_ctx = ctx->ctx_num;
 		}
@@ -2249,6 +2154,8 @@ int fimc_qbuf_output(void *fh, struct v4l2_buffer *b)
 		}
 	}
 
+qbuf_output_end: //added patch
+	mutex_unlock(&ctrl->out->lock_fimc_out); //added patch
 	return ret;
 }
 
@@ -2283,7 +2190,8 @@ int fimc_dqbuf_output(void *fh, struct v4l2_buffer *b)
 	}
 
 	mutex_lock(&ctrl->lock);
-	if (ctx->overlay.mode == FIMC_OVLY_DMA_AUTO && ctrl->fb.is_enable == 0) {
+	if (ctx->overlay.mode == FIMC_OVLY_DMA_AUTO &&
+			ctrl->fb.is_enable == 0) {
 		ret = fb_blank(registered_fb[ctx->overlay.fb_id],
 						FB_BLANK_UNBLANK);
 		if (ret < 0) {
@@ -2334,6 +2242,8 @@ int fimc_g_fmt_vid_out(struct file *filp, void *fh, struct v4l2_format *f)
 		spin_lock_init(&ctrl->out->lock_in);
 		spin_lock_init(&ctrl->out->lock_out);
 
+		mutex_init(&ctrl->out->lock_fimc_out); //added patch
+		
 		for (i = 0; i < FIMC_INQUEUES; i++) {
 			ctrl->out->inq[i].ctx = -1;
 			ctrl->out->inq[i].idx = -1;

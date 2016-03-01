@@ -76,14 +76,14 @@ static void cpuidle_idle_call(void)
 #endif
 
 	/*
-	 * Call the device's prepare function before calling the
-	 * governor's select function.  ->prepare gives the device's
-	 * cpuidle driver a chance to update any dynamic information
-	 * of its cpuidle states for the current idle period, e.g.
-	 * state availability, latencies, residencies, etc.
-	 */
+   	 * Call the device's prepare function before calling the
+   	 * governor's select function.  ->prepare gives the device's
+   	 * cpuidle driver a chance to update any dynamic information
+   	 * of its cpuidle states for the current idle period, e.g.
+   	 * state availability, latencies, residencies, etc.
+   	 */
 	if (dev->prepare)
-		dev->prepare(dev);
+    		dev->prepare(dev);
 
 	/* ask the governor for the next state */
 	next_state = cpuidle_curr_governor->select(dev);

@@ -27,15 +27,14 @@
 #include <mach/dma.h>
 #include <mach/regs-gpio.h>
 
-#define S5PC110_MAX_STATES	1
-
+#define S5PC110_MAX_STATES  1
 static void s5p_enter_idle(void)
 {
 	unsigned long tmp;
 
 	tmp = __raw_readl(S5P_IDLE_CFG);
 	tmp &= ~((3<<30)|(3<<28)|(1<<0));
-	tmp |= ((2<<30)|(2<<28));
+  	tmp |= ((2<<30)|(2<<28));
 	__raw_writel(tmp, S5P_IDLE_CFG);
 
 	tmp = __raw_readl(S5P_PWR_CFG);
@@ -75,7 +74,6 @@ static struct cpuidle_driver s5p_idle_driver = {
 static int s5p_init_cpuidle(void)
 {
 	struct cpuidle_device *device;
-
 	cpuidle_register_driver(&s5p_idle_driver);
 
 	device = &per_cpu(s5p_cpuidle_device, smp_processor_id());
@@ -90,8 +88,8 @@ static int s5p_init_cpuidle(void)
 	strcpy(device->states[0].desc, "ARM clock gating - WFI");
 
 	if (cpuidle_register_device(device)) {
-		printk(KERN_ERR "s5p_init_cpuidle: Failed registering\n");
-		return -EIO;
+    	printk(KERN_ERR "s5p_init_cpuidle: Failed registering\n");
+    	return -EIO;
 	}
 
 	return 0;

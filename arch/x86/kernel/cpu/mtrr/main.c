@@ -45,7 +45,6 @@
 #include <linux/cpu.h>
 #include <linux/pci.h>
 #include <linux/smp.h>
-#include <linux/syscore_ops.h>
 
 #include <asm/processor.h>
 #include <asm/e820.h>
@@ -664,7 +663,7 @@ struct mtrr_value {
 
 static struct mtrr_value mtrr_value[MTRR_MAX_VAR_RANGES];
 
-static int mtrr_save(void)
+static int mtrr_save(struct sys_device *sysdev, pm_message_t state)
 {
 	int i;
 
@@ -676,7 +675,7 @@ static int mtrr_save(void)
 	return 0;
 }
 
-static void mtrr_restore(void)
+static int mtrr_restore(struct sys_device *sysdev)
 {
 	int i;
 
@@ -687,11 +686,12 @@ static void mtrr_restore(void)
 				    mtrr_value[i].ltype);
 		}
 	}
+	return 0;
 }
 
 
 
-static struct syscore_ops mtrr_syscore_ops = {
+static struct sysdev_driver mtrr_sysdev_driver = {
 	.suspend	= mtrr_save,
 	.resume		= mtrr_restore,
 };
@@ -872,7 +872,7 @@ static int __init mtrr_init_finialize(void)
 	 * TBD: is there any system with such CPU which supports
 	 * suspend/resume? If no, we should remove the code.
 	 */
-	register_syscore_ops(&mtrr_syscore_ops);
+	sysdev_driver_register(&cpu_sysdev_class, &mtrr_sysdev_driver);
 
 	return 0;
 }

@@ -38,9 +38,7 @@
 
 #include "fimc.h"
 
-#ifdef CONFIG_MACH_P1
 #define CLEAR_FIMC2_BUFF
-#endif
 
 struct fimc_global *fimc_dev;
 
@@ -151,11 +149,7 @@ static inline u32 fimc_irq_out_single_buf(struct fimc_control *ctrl,
 		ctrl->out->idxs.active.ctx = -1;
 		ctrl->out->idxs.active.idx = -1;
 		ctx->status = FIMC_STREAMOFF;
-#if defined (CONFIG_MACH_ARIES) && !defined (CONFIG_SAMSUNG_YPG1)
-		ctrl->status = FIMC_STREAMOFF;
-#else // CONFIG_MACH_P1/CONFIG_SAMSUNG_YPG1
 		ctrl->status = FIMC_STREAMON_IDLE;
-#endif
 
 		return wakeup;
 	}
@@ -263,13 +257,11 @@ static inline u32 fimc_irq_out_dma(struct fimc_control *ctrl,
 		ctrl->out->idxs.active.ctx = -1;
 		ctrl->out->idxs.active.idx = -1;
 		ctx->status = FIMC_STREAMOFF;
-#if defined (CONFIG_MACH_ARIES) && !defined (CONFIG_SAMSUNG_YPG1)
-		ctrl->status = FIMC_STREAMOFF;
-#else // CONFIG_MACH_P1/CONFIG_SAMSUNG_YPG1
 		ctrl->status = FIMC_STREAMON_IDLE;
-#endif
 		return wakeup;
 	}
+
+	ctx->status = FIMC_STREAMON_IDLE; //added patch
 
 	/* Attach done buffer to outgoing queue. */
 	ret = fimc_push_outq(ctrl, ctx, idx);
@@ -296,14 +288,19 @@ static inline u32 fimc_irq_out_dma(struct fimc_control *ctrl,
 	/* Detach buffer from incomming queue. */
 	ret = fimc_pop_inq(ctrl, &ctx_num, &next);
 	if (ret == 0) {		/* There is a buffer in incomming queue. */
+		if (ctx_num != ctrl->out->last_ctx) { //added patch
 		ctx = &ctrl->out->ctx[ctx_num];
-		fimc_outdev_set_src_addr(ctrl, ctx->src[next].base);
+		//fimc_outdev_set_src_addr(ctrl, ctx->src[next].base); //added patch
 
-		memset(&buf_set, 0x00, sizeof(buf_set));
-		buf_set.base[FIMC_ADDR_Y] = ctx->dst[next].base[FIMC_ADDR_Y];
-
-		for (i = 0; i < FIMC_PHYBUFS; i++)
-			fimc_hwset_output_address(ctrl, &buf_set, i);
+		//memset(&buf_set, 0x00, sizeof(buf_set)); //added patch
+		//buf_set.base[FIMC_ADDR_Y] = ctx->dst[next].base[FIMC_ADDR_Y]; //added patch
+		ctrl->out->last_ctx = ctx->ctx_num; //added patch
+		fimc_outdev_set_ctx_param(ctrl, ctx); //added patch
+		} //added patch
+		//for (i = 0; i < FIMC_PHYBUFS; i++) //added patch
+		//	fimc_hwset_output_address(ctrl, &buf_set, i); //added patch
+        fimc_outdev_set_src_addr(ctrl, ctx->src[next].base); //added patch
+		fimc_output_set_dst_addr(ctrl, ctx, next); //added patch
 
 		ret = fimc_outdev_start_camif(ctrl);
 		if (ret < 0)
@@ -418,15 +415,25 @@ static inline void fimc_irq_cap(struct fimc_control *ctrl)
 
 	fimc_hwset_clear_irq(ctrl);
 	if (fimc_hwget_overflow_state(ctrl)) {
+
+		fimc_err("%s: fimc_hwget_overflow_state\n", __func__);
+		
 		/* s/w reset -- added for recovering module in ESD state*/
+		#ifndef CONFIG_VIDEO_M5MO //NAGSM_ANDROID_HQ_CAMERA_SoojinKim_20110629 : prevent power reset
 		cfg = readl(ctrl->regs + S3C_CIGCTRL);
 		cfg |= (S3C_CIGCTRL_SWRST);
 		writel(cfg, ctrl->regs + S3C_CIGCTRL);
-		msleep(1);
+
+		//NAGSM_ANDROID_HQ_CAMERA_SoojinKim_20110627 : prevent kernel panic
+		//msleep(1);
+		mdelay(1);
 
 		cfg = readl(ctrl->regs + S3C_CIGCTRL);
 		cfg &= ~S3C_CIGCTRL_SWRST;
 		writel(cfg, ctrl->regs + S3C_CIGCTRL);
+		#else
+		return;
+		#endif
 	}
 	pp = ((fimc_hwget_frame_count(ctrl) + 2) % 4);
 	if (cap->fmt.field == V4L2_FIELD_INTERLACED_TB) {
@@ -644,18 +651,11 @@ int fimc_mmap_out_dst(struct file *filp, struct vm_area_struct *vma, u32 idx)
 
 	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
 	vma->vm_flags |= VM_RESERVED;
-#if defined (CONFIG_MACH_ARIES) && !defined (CONFIG_SAMSUNG_YPG1)
-	pfn = __phys_to_pfn(ctrl->out->ctx[ctx_id].dst[idx].base[0]);
-#else // CONFIG_MACH_P1/CONFIG_SAMSUNG_YPG1
-#if defined (CONFIG_SAMSUNG_P1) || defined (CONFIG_SAMSUNG_P1C) || defined (CONFIG_SAMSUNG_YPG1)
+
 	if (ctrl->out->ctx[ctx_id].dst[idx].base[0])
 		pfn = __phys_to_pfn(ctrl->out->ctx[ctx_id].dst[idx].base[0]);
 	else
 		pfn = __phys_to_pfn(ctrl->mem.curr);
-#elif defined (CONFIG_SAMSUNG_P1LN)
-		pfn = __phys_to_pfn(ctrl->mem.base);
-#endif
-#endif
 
 	ret = remap_pfn_range(vma, vma->vm_start, pfn, size, vma->vm_page_prot);
 	if (ret != 0)
@@ -745,32 +745,28 @@ static u32 fimc_poll(struct file *filp, poll_table *wait)
 
 	return mask;
 }
-#ifdef CONFIG_MACH_P1
+
+//NAGSM_HQ_CAMERA_LEESUNGKOO_20101115 : for flash touch mode
 #include <mach/gpio.h>
 #include <plat/gpio-cfg.h>
-#include <mach/gpio-p1.h>
+#include <mach/gpio-aries.h>
 #include <linux/delay.h>
-#endif
-#ifdef CONFIG_SAMSUNG_YPG1
-#include <mach/gpio.h>
-#include <plat/gpio-cfg.h>
-#include <mach/gpio-ypg1.h>
-#include <linux/delay.h>
-#endif
+
 static
 ssize_t fimc_read(struct file *filp, char *buf, size_t count, loff_t *pos)
 {
-
 	int err = 0;
-#if defined (CONFIG_MACH_P1) || defined (CONFIG_SAMSUNG_YPG1)
+
+#if defined(CONFIG_S5PC110_HAWK_BOARD)
 	printk("%s, for factory test\n", __func__);
 
+	gpio_direction_output(S5PV210_GPJ2(0), 0);
+	gpio_direction_output(S5PV210_GPJ2(1), 0);
 
-	gpio_direction_output(S5PV210_MP04(2), 0);
-	gpio_direction_output(S5PV210_MP04(3), 0);
-
-	gpio_free(S5PV210_MP04(2));
-	gpio_free(S5PV210_MP04(3));
+	gpio_free(S5PV210_GPJ2(0));
+	gpio_free(S5PV210_GPJ2(1));
+#else
+	printk("%s is not define until now\n", __func__);
 #endif
 	return err;
 }
@@ -778,39 +774,42 @@ ssize_t fimc_read(struct file *filp, char *buf, size_t count, loff_t *pos)
 static
 ssize_t fimc_write(struct file *filp, const char *b, size_t c, loff_t *offset)
 {
-	int err = 0;
-#if defined (CONFIG_MACH_P1) || defined (CONFIG_SAMSUNG_YPG1)
 	int i = 0;
+	int err = 0;
 
+#if defined(CONFIG_S5PC110_HAWK_BOARD)
 	printk("%s, for factory test\n", __func__);
 
-	err = gpio_request(S5PV210_MP04(2), "MP04");
-	if (err)
+	err = gpio_request(S5PV210_GPJ2(0), "GPJ20");
+	if (err) 
 	{
-		printk(KERN_ERR "failed to request MP04 for camera control\n");
+		printk(KERN_ERR "failed to request GPJ20 for camera control\n");
 		return err;
 	}
-	err = gpio_request(S5PV210_MP04(3), "MP04");
-	if (err)
+	err = gpio_request(S5PV210_GPJ2(1), "GPJ21");
+	if (err) 
 	{
-		printk(KERN_ERR "failed to request MP04 for camera control\n");
+		printk(KERN_ERR "failed to request GPJ21 for camera control\n");
 		return err;
 	}
 	//movie mode
-	gpio_direction_output(S5PV210_MP04(3), 0);
+	gpio_direction_output(S5PV210_GPJ2(0), 0);
 	for (i = 8; i > 1; i--)
 	{
 		//gpio on
-		gpio_direction_output(S5PV210_MP04(2), 1);
+		gpio_direction_output(S5PV210_GPJ2(1), 1);
 		udelay(1);
 		//gpio off
-		gpio_direction_output(S5PV210_MP04(2), 0);
+		gpio_direction_output(S5PV210_GPJ2(1), 0);
 		udelay(1);
 	}
-	gpio_direction_output(S5PV210_MP04(2), 1);
+	gpio_direction_output(S5PV210_GPJ2(1), 1);
 	mdelay(2);
+#else
+	printk("%s is not define until now\n", __func__);
 #endif
-	return err;
+
+	return 0;
 }
 
 u32 fimc_mapping_rot_flip(u32 rot, u32 flip)
@@ -1080,9 +1079,6 @@ static int fimc_release(struct file *filp)
 	struct mm_struct *mm = current->mm;
 	struct fimc_ctx *ctx;
 	int ret = 0, i;
-#if defined (CONFIG_MACH_ARIES) && !defined (CONFIG_SAMSUNG_YPG1)
-	ctx = &ctrl->out->ctx[ctx_id];
-#endif
 
 	pdata = to_fimc_plat(ctrl->dev);
 
@@ -1115,9 +1111,7 @@ static int fimc_release(struct file *filp)
 	}
 
 	if (ctrl->out) {
-#if defined (CONFIG_MACH_P1) || defined (CONFIG_SAMSUNG_YPG1)
 		ctx = &ctrl->out->ctx[ctx_id];
-#endif
 		if (ctx->status != FIMC_STREAMOFF) {
 			fimc_clk_en(ctrl, true);
 			ret = fimc_outdev_stop_streaming(ctrl, ctx);
@@ -1144,13 +1138,10 @@ static int fimc_release(struct file *filp)
 				ctx->src[i].state = VIDEOBUF_IDLE;
 				ctx->src[i].flags = V4L2_BUF_FLAG_MAPPED;
 			}
-#if defined (CONFIG_MACH_ARIES) && !defined (CONFIG_SAMSUNG_YPG1)
-			if (ctx->overlay.mode == FIMC_OVLY_DMA_AUTO) {
-#else
+
 			if ((ctx->overlay.mode == FIMC_OVLY_DMA_AUTO ||
 				ctx->overlay.mode == FIMC_OVLY_NOT_FIXED) &&
 				 ctx->dst[0].base[FIMC_ADDR_Y] != 0) {
-#endif
 				ctrl->mem.curr = ctx->dst[0].base[FIMC_ADDR_Y];
 
 				for (i = 0; i < FIMC_OUTBUFS; i++) {
@@ -1178,11 +1169,8 @@ static int fimc_release(struct file *filp)
 							__func__);
 			}
 		}
-#if defined (CONFIG_MACH_ARIES) && !defined (CONFIG_SAMSUNG_YPG1)
-		ctrl->ctx_busy[ctx_id] = 0;
-#endif
+
 		memset(ctx, 0x00, sizeof(struct fimc_ctx));
-#if defined (CONFIG_MACH_P1) || defined (CONFIG_SAMSUNG_YPG1)
 
 		ctx->ctx_num = ctx_id;
 		ctx->overlay.mode = FIMC_OVLY_NOT_FIXED;
@@ -1192,7 +1180,7 @@ static int fimc_release(struct file *filp)
 			ctx->inq[i] = -1;
 			ctx->outq[i] = -1;
 		}
-#endif
+
 		if (atomic_read(&ctrl->in_use) == 0) {
 			ctrl->status = FIMC_STREAMOFF;
 			fimc_outdev_init_idxs(ctrl);
@@ -1208,28 +1196,9 @@ static int fimc_release(struct file *filp)
 			filp->private_data = NULL;
 		}
 	}
-#if defined (CONFIG_MACH_ARIES) && !defined (CONFIG_SAMSUNG_YPG1)
-	/*
-	 * it remain afterimage when I play movie using overlay and exit
-	 */
-	if (ctrl->fb.is_enable == 1) {
-		fimc_info2("WIN_OFF for FIMC%d\n", ctrl->id);
-		ret = fb_blank(registered_fb[ctx->overlay.fb_id],
-				FB_BLANK_POWERDOWN);
-		if (ret < 0) {
-			fimc_err("%s: fb_blank: fb[%d] " \
-					"mode=FB_BLANK_POWERDOWN\n",
-					__func__, ctx->overlay.fb_id);
-			ret = -EINVAL;
-			goto release_err;
-		}
 
-		ctrl->fb.is_enable = 0;
-	}
-#endif
-#if defined (CONFIG_MACH_P1) || defined (CONFIG_SAMSUNG_YPG1)
 	ctrl->ctx_busy[ctx_id] = 0;
-#endif
+
 	mutex_unlock(&ctrl->lock);
 
 	fimc_info1("%s released.\n", ctrl->name);

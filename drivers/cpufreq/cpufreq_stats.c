@@ -165,12 +165,12 @@ static int freq_table_get_index(struct cpufreq_stats *stat, unsigned int freq)
 	return -1;
 }
 
-/* should be called late in the CPU removal sequence so that the stats
- * memory is still available in case someone tries to use it.
- */
 static void cpufreq_stats_free_table(unsigned int cpu)
 {
 	struct cpufreq_stats *stat = per_cpu(cpufreq_stats_table, cpu);
+	struct cpufreq_policy *policy = cpufreq_cpu_get(cpu);
+	if (policy && policy->cpu == cpu)
+		sysfs_remove_group(&policy->kobj, &stats_attr_group);
 	if (stat) {
 		kfree(stat->time_in_state);
 		kfree(stat);
@@ -185,7 +185,7 @@ static void cpufreq_stats_free_sysfs(unsigned int cpu)
 {
 	struct cpufreq_policy *policy = cpufreq_cpu_get(cpu);
 	if (policy && policy->cpu == cpu)
-		sysfs_remove_group(&policy->kobj, &stats_attr_group);
+	    sysfs_remove_group(&policy->kobj, &stats_attr_group);
 	if (policy)
 		cpufreq_cpu_put(policy);
 }
@@ -319,23 +319,23 @@ static int cpufreq_stat_notifier_trans(struct notifier_block *nb,
 
 static int cpufreq_stats_create_table_cpu(unsigned int cpu)
 {
-	struct cpufreq_policy *policy;
-	struct cpufreq_frequency_table *table;
-	int ret = -ENODEV;
+  struct cpufreq_policy *policy;
+  struct cpufreq_frequency_table *table;
+  int ret = -ENODEV;
 
-	policy = cpufreq_cpu_get(cpu);
-	if (!policy)
-		return -ENODEV;
+  policy = cpufreq_cpu_get(cpu);
+  if (!policy)
+    return -ENODEV;
 
-	table = cpufreq_frequency_get_table(cpu);
-	if (!table)
-		goto out;
+  table = cpufreq_frequency_get_table(cpu);
+  if (!table)
+    goto out;
 
-	ret = cpufreq_stats_create_table(policy, table);
+  ret = cpufreq_stats_create_table(policy, table);
 
 out:
-	cpufreq_cpu_put(policy);
-	return ret;
+  cpufreq_cpu_put(policy);
+  return ret;
 }
 
 static int __cpuinit cpufreq_stat_cpu_callback(struct notifier_block *nfb,
@@ -359,8 +359,8 @@ static int __cpuinit cpufreq_stat_cpu_callback(struct notifier_block *nfb,
 		break;
 	case CPU_DOWN_FAILED:
 	case CPU_DOWN_FAILED_FROZEN:
-		cpufreq_stats_create_table_cpu(cpu);
-		break;
+    		cpufreq_stats_create_table_cpu(cpu);
+    		break;
 	}
 	return NOTIFY_OK;
 }

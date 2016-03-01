@@ -25,7 +25,8 @@ unsigned int __machine_arch_type;
 #include <linux/stddef.h>	/* for NULL */
 #include <linux/linkage.h>
 #include <asm/string.h>
-#include <asm/setup.h>
+
+#include <asm/unaligned.h>
 
 
 static void putstr(const char *ptr);
@@ -35,7 +36,7 @@ extern void error(char *x);
 
 #ifdef CONFIG_DEBUG_ICEDCC
 
-#if defined(CONFIG_CPU_V6) || defined(CONFIG_CPU_V6K) || defined(CONFIG_CPU_V7)
+#if defined(CONFIG_CPU_V6) || defined(CONFIG_CPU_V7)
 
 static void icedcc_putc(int ch)
 {
@@ -51,6 +52,16 @@ static void icedcc_putc(int ch)
 	asm("mcr p14, 0, %0, c0, c5, 0" : : "r" (ch));
 }
 
+#elif defined(CONFIG_CPU_V7)
+
+static void icedcc_putc(int ch)
+{
+	asm(
+	"wait:	mrc	p14, 0, pc, c0, c1, 0			\n\
+		bcs	wait					\n\
+		mcr     p14, 0, %0, c0, c5, 0			"
+	: : "r" (ch));
+}
 
 #elif defined(CONFIG_CPU_XSCALE)
 
@@ -138,12 +149,13 @@ void *memcpy(void *__dest, __const void *__src, size_t __n)
 }
 
 /*
- * gzip declarations
+ * gzip delarations
  */
 extern char input_data[];
 extern char input_data_end[];
 
 unsigned char *output_data;
+unsigned long output_ptr;
 
 unsigned long free_mem_ptr;
 unsigned long free_mem_end_ptr;
@@ -168,15 +180,15 @@ asmlinkage void __div0(void)
 	error("Attempting division by 0!");
 }
 
-extern int do_decompress(u8 *input, int len, u8 *output, void (*error)(char *x));
+extern void do_decompress(u8 *input, int len, u8 *output, void (*error)(char *x));
 
 
-void
+unsigned long
 decompress_kernel(unsigned long output_start, unsigned long free_mem_ptr_p,
 		unsigned long free_mem_ptr_end_p,
 		int arch_id)
 {
-	int ret;
+	unsigned char *tmp;
 
 	output_data		= (unsigned char *)output_start;
 	free_mem_ptr		= free_mem_ptr_p;
@@ -185,33 +197,12 @@ decompress_kernel(unsigned long output_start, unsigned long free_mem_ptr_p,
 
 	arch_decomp_setup();
 
+	tmp = (unsigned char *) (((unsigned long)input_data_end) - 4);
+	output_ptr = get_unaligned_le32(tmp);
+
 	putstr("Uncompressing Linux...");
-	ret = do_decompress(input_data, input_data_end - input_data,
-			    output_data, error);
-	if (ret)
-		error("decompressor returned an error");
-	else
-		putstr(" done, booting the kernel.\n");
-}
-
-const struct tag *copy_atags(struct tag *dest, const struct tag *src,
-                             size_t max)
-{
-	struct tag *tag;
-	size_t      size;
-
-	/* Find the last tag (ATAG_NONE). */
-	for_each_tag(tag, (struct tag *)src)
-		continue;
-
-	/* Include the last tag in copy. */
-	size = (char *)tag - (char *)src + sizeof(struct tag_header);
-
-	/* If there's not enough room, just use original and hope it works. */
-	if (size > max)
-		return src;
-
-	memcpy(dest, src, size);
-
-	return dest;
+	do_decompress(input_data, input_data_end - input_data,
+			output_data, error);
+	putstr(" done, booting the kernel.\n");
+	return output_ptr;
 }

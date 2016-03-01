@@ -429,24 +429,22 @@ static u32 __devinitdata pxm_flag[PXM_FLAG_LEN];
 static struct acpi_table_slit __initdata *slit_table;
 cpumask_t early_cpu_possible_map = CPU_MASK_NONE;
 
-static int __init
-get_processor_proximity_domain(struct acpi_srat_cpu_affinity *pa)
+static int get_processor_proximity_domain(struct acpi_srat_cpu_affinity *pa)
 {
 	int pxm;
 
 	pxm = pa->proximity_domain_lo;
-	if (ia64_platform_is("sn2") || acpi_srat_revision >= 2)
+	if (ia64_platform_is("sn2"))
 		pxm += pa->proximity_domain_hi[0] << 8;
 	return pxm;
 }
 
-static int __init
-get_memory_proximity_domain(struct acpi_srat_mem_affinity *ma)
+static int get_memory_proximity_domain(struct acpi_srat_mem_affinity *ma)
 {
 	int pxm;
 
 	pxm = ma->proximity_domain;
-	if (!ia64_platform_is("sn2") && acpi_srat_revision <= 1)
+	if (!ia64_platform_is("sn2"))
 		pxm &= 0xff;
 
 	return pxm;
@@ -479,12 +477,6 @@ acpi_numa_processor_affinity_init(struct acpi_srat_cpu_affinity *pa)
 	if (!(pa->flags & ACPI_SRAT_CPU_ENABLED))
 		return;
 
-	if (srat_num_cpus >= ARRAY_SIZE(node_cpuid)) {
-		printk_once(KERN_WARNING
-			    "node_cpuid[%ld] is too small, may not be able to use all cpus\n",
-			    ARRAY_SIZE(node_cpuid));
-		return;
-	}
 	pxm = get_processor_proximity_domain(pa);
 
 	/* record this node in proximity bitmap */
@@ -805,7 +797,7 @@ int acpi_isa_irq_to_gsi(unsigned isa_irq, u32 *gsi)
  *  ACPI based hotplug CPU support
  */
 #ifdef CONFIG_ACPI_HOTPLUG_CPU
-static __cpuinit
+static
 int acpi_map_cpu2node(acpi_handle handle, int cpu, int physid)
 {
 #ifdef CONFIG_ACPI_NUMA
@@ -880,7 +872,7 @@ __init void prefill_possible_map(void)
 		set_cpu_possible(i, true);
 }
 
-static int __cpuinit _acpi_map_lsapic(acpi_handle handle, int *pcpu)
+int acpi_map_lsapic(acpi_handle handle, int *pcpu)
 {
 	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
 	union acpi_object *obj;
@@ -931,11 +923,6 @@ static int __cpuinit _acpi_map_lsapic(acpi_handle handle, int *pcpu)
 	return (0);
 }
 
-/* wrapper to silence section mismatch warning */
-int __ref acpi_map_lsapic(acpi_handle handle, int *pcpu)
-{
-	return _acpi_map_lsapic(handle, pcpu);
-}
 EXPORT_SYMBOL(acpi_map_lsapic);
 
 int acpi_unmap_lsapic(int cpu)
@@ -1041,8 +1028,18 @@ int acpi_unregister_ioapic(acpi_handle handle, u32 gsi_base)
 EXPORT_SYMBOL(acpi_unregister_ioapic);
 
 /*
- * acpi_suspend_lowlevel() - save kernel state and suspend.
+ * acpi_save_state_mem() - save kernel state
  *
  * TBD when when IA64 starts to support suspend...
  */
-int acpi_suspend_lowlevel(void) { return 0; }
+int acpi_save_state_mem(void) { return 0; } 
+
+/*
+ * acpi_restore_state()
+ */
+void acpi_restore_state_mem(void) {}
+
+/*
+ * do_suspend_lowlevel()
+ */
+void do_suspend_lowlevel(void) {}

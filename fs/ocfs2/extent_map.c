@@ -28,6 +28,7 @@
 #include <linux/types.h>
 #include <linux/fiemap.h>
 
+#define MLOG_MASK_PREFIX ML_EXTENT_MAP
 #include <cluster/masklog.h>
 
 #include "ocfs2.h"
@@ -38,7 +39,6 @@
 #include "inode.h"
 #include "super.h"
 #include "symlink.h"
-#include "ocfs2_trace.h"
 
 #include "buffer_head_io.h"
 
@@ -782,6 +782,7 @@ int ocfs2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 	cpos = map_start >> osb->s_clustersize_bits;
 	mapping_end = ocfs2_clusters_for_bytes(inode->i_sb,
 					       map_start + map_len);
+	mapping_end -= cpos;
 	is_last = 0;
 	while (cpos < mapping_end && !is_last) {
 		u32 fe_flags;
@@ -790,7 +791,7 @@ int ocfs2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 						 &hole_size, &rec, &is_last);
 		if (ret) {
 			mlog_errno(ret);
-			goto out_unlock;
+			goto out;
 		}
 
 		if (rec.e_blkno == 0ULL) {
@@ -840,9 +841,10 @@ int ocfs2_read_virt_blocks(struct inode *inode, u64 v_block, int nr,
 	u64 p_block, p_count;
 	int i, count, done = 0;
 
-	trace_ocfs2_read_virt_blocks(
-	     inode, (unsigned long long)v_block, nr, bhs, flags,
-	     validate);
+	mlog_entry("(inode = %p, v_block = %llu, nr = %d, bhs = %p, "
+		   "flags = %x, validate = %p)\n",
+		   inode, (unsigned long long)v_block, nr, bhs, flags,
+		   validate);
 
 	if (((v_block + nr - 1) << inode->i_sb->s_blocksize_bits) >=
 	    i_size_read(inode)) {
@@ -895,6 +897,7 @@ int ocfs2_read_virt_blocks(struct inode *inode, u64 v_block, int nr,
 	}
 
 out:
+	mlog_exit(rc);
 	return rc;
 }
 

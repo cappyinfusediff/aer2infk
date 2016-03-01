@@ -18,7 +18,7 @@
 #define gpio_cansleep	__gpio_cansleep
 #define gpio_to_irq	__gpio_to_irq
 
-/* Practically, GPIO banks up to MP03 are the configurable gpio banks */
+/* Practically, GPIO banks upto MP03 are the configurable gpio banks */
 
 /* GPIO bank sizes */
 #define S5PV210_GPIO_A0_NR	(8)
@@ -228,10 +228,6 @@ enum s5p_gpio_number {
 
 #include <plat/gpio-cfg.h>
 
-#if defined (CONFIG_SAMSUNG_P1LN)
-#include "gpio-p1.h"
-#endif	/* P1L or P1N */
-
 extern int s3c_gpio_slp_cfgpin(unsigned int pin, unsigned int to);
 extern s3c_gpio_pull_t s3c_gpio_get_slp_cfgpin(unsigned int pin);
 
@@ -250,6 +246,11 @@ extern int s3c_gpio_set_slewrate(unsigned int pin, unsigned int config);
 
 #define S3C_GPIO_SLEWRATE_FAST  (0)
 #define S3C_GPIO_SLEWRATE_SLOW  (1)
+
+#if defined(CONFIG_S5PC110_HAWK_BOARD) || defined(CONFIG_S5PC110_DEMPSEY_BOARD)
+#include "gpio-aries.h"
+#endif 
+
 
 extern int s3c_gpio_slp_setpull_updown(unsigned int pin, s3c_gpio_pull_t pull);
 extern int s5pv210_gpiolib_init(void);

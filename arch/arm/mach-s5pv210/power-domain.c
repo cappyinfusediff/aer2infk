@@ -38,10 +38,12 @@ struct clk_should_be_running {
 	const char *clk_name;
 	struct device *dev;
 };
-static spinlock_t pd_lock;
+static spinlock_t pd_lock; 
 
 static struct regulator_consumer_supply s5pv210_pd_audio_supply[] = {
-	REGULATOR_SUPPLY("pd", "samsung-i2s.0"),
+	REGULATOR_SUPPLY("pd", "s5pc1xx-iis.0"),
+	REGULATOR_SUPPLY("pd", "samsung-pcm.0"),
+	REGULATOR_SUPPLY("pd", "samsung-pcm.1"),
 };
 
 static struct regulator_consumer_supply s5pv210_pd_cam_supply[] = {
@@ -127,29 +129,34 @@ struct clk_should_be_running s5pv210_pd_audio_clk[] = {
 	{
 		.clk_name	= "i2scdclk",
 		.dev		= &s5pv210_device_iis0.dev,
-	}, {
+	},
+	{
+		.clk_name	= "pcm",
+		.dev		= &s5pv210_device_pcm1.dev,
+	},
+	{
 		/* end of the clock array */
 	},
 };
 
 struct clk_should_be_running s5pv210_pd_cam_clk[] = {
 	{
-		.clk_name	= "fimc",
+		.clk_name	= "sclk_fimc_lclk",
 		.dev		= &s3c_device_fimc0.dev,
 	}, {
-		.clk_name	= "fimc",
+		.clk_name	= "sclk_fimc_lclk",
 		.dev		= &s3c_device_fimc1.dev,
 	}, {
-		.clk_name	= "fimc",
+		.clk_name	= "sclk_fimc_lclk",
 		.dev		= &s3c_device_fimc2.dev,
 	}, {
 		.clk_name	= "sclk_csis",
-		.dev		= &s5p_device_mipi_csis0.dev,
+		.dev		= &s3c_device_csis.dev,
 	}, {
 		.clk_name	= "jpeg",
 		.dev		= &s3c_device_jpeg.dev,
 	}, {
-		.clk_name	= "rot",
+		.clk_name	= "rotator",
 		.dev		= &s5p_device_rotator.dev,
 	}, {
 		/* end of the clock array */
@@ -336,22 +343,21 @@ static int s5pv210_pd_ctrl(int ctrlbit, int enable)
 	u32 pd_reg;
 
 	spin_lock(&pd_lock);
-	pd_reg = __raw_readl(S5P_NORMAL_CFG);
+	pd_reg = __raw_readl(S5P_NORMAL_CFG); 
 	if (enable) {
 		__raw_writel((pd_reg | ctrlbit), S5P_NORMAL_CFG);
 		if (s5pv210_pd_pwr_done(ctrlbit))
-			goto out;
+			goto out; 
 	} else {
 		__raw_writel((pd_reg & ~(ctrlbit)), S5P_NORMAL_CFG);
 		if (s5pv210_pd_pwr_off(ctrlbit))
-			goto out;
+			goto out; 
 	}
-	spin_unlock(&pd_lock);
+	spin_unlock(&pd_lock); 
 	return 0;
 out:
 	spin_unlock(&pd_lock);
-	return -ETIME;
-
+	return -ETIME; 
 }
 
 static int s5pv210_pd_clk_enable(struct clk_should_be_running *clk_run)
@@ -410,7 +416,7 @@ static int s5pv210_pd_is_enabled(struct regulator_dev *dev)
 static int s5pv210_pd_enable(struct regulator_dev *dev)
 {
 	struct s5pv210_pd_data *data = rdev_get_drvdata(dev);
-	int ret = 0;
+	int ret;
 
 	if (data->clk_run)
 		s5pv210_pd_clk_enable(data->clk_run);
@@ -418,12 +424,13 @@ static int s5pv210_pd_enable(struct regulator_dev *dev)
 	ret = s5pv210_pd_ctrl(data->ctrlbit, 1);
 	if (ret < 0) {
 		printk(KERN_ERR "failed to enable power domain\n");
+		return ret;
 	}
 
 	if (data->clk_run)
 		s5pv210_pd_clk_disable(data->clk_run);
 
-	return ret;
+	return 0;
 }
 
 static int s5pv210_pd_disable(struct regulator_dev *dev)
@@ -504,7 +511,7 @@ static int __devinit reg_s5pv210_pd_probe(struct platform_device *pdev)
 
 	drvdata->clk_run = config->clk_run;
 	drvdata->ctrlbit = config->ctrlbit;
-	spin_lock_init(&pd_lock);
+	spin_lock_init(&pd_lock); 
 
 	drvdata->dev = regulator_register(&drvdata->desc, &pdev->dev,
 					  config->init_data, drvdata);

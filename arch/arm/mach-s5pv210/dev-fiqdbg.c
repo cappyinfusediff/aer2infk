@@ -25,32 +25,6 @@
 #include <mach/map.h>
 #include <plat/regs-serial.h>
 
-#ifdef CONFIG_KEYBOARD_P1
-static void *g_base;
-extern bool keyboard_enable;
-extern void send_keyevent(unsigned int key_code);
-void dock_keyboard_tx(u8 val)
-{
-    writel(val, g_base + S3C2410_UTXH);
-}
-EXPORT_SYMBOL(dock_keyboard_tx);
-
-int change_console_baud_rate(int baud)
-{
-    if(baud == 9600)
-    {
-        writel(431, g_base + S3C2410_UBRDIV);
-    }
-    else
-    {
-        writel(35, g_base + S3C2410_UBRDIV);
-    }
-    return 0;
-
-}
-EXPORT_SYMBOL(change_console_baud_rate);
-#endif
-
 static void *s5pv210_fiqdbg_get_base(struct platform_device *pdev)
 {
 	return S5P_VA_UART0 + S3C_UART_OFFSET * pdev->id;
@@ -80,7 +54,6 @@ static int s5pv210_fiqdbg_uart_getc(struct platform_device *pdev)
 {
 	void *base = s5pv210_fiqdbg_get_base(pdev);
 	unsigned int ufstat;
-	u8 rx_ch;
 
 	if (readl(base + S3C2410_UERSTAT) & S3C2410_UERSTAT_BREAK)
 		return FIQ_DEBUGGER_BREAK;
@@ -88,15 +61,7 @@ static int s5pv210_fiqdbg_uart_getc(struct platform_device *pdev)
 	ufstat = readl(base + S3C2410_UFSTAT);
 	if (!(ufstat & (S5PV210_UFSTAT_RXMASK | S5PV210_UFSTAT_RXFULL)))
 		return FIQ_DEBUGGER_NO_CHAR;
-
-	rx_ch = readb(base + S3C2410_URXH);
-
-#ifdef CONFIG_KEYBOARD_P1
-	if(keyboard_enable)
-		send_keyevent(rx_ch);
-#endif
-
-	return rx_ch;
+	return readb(base + S3C2410_URXH);
 }
 
 static void s5pv210_fiqdbg_uart_putc(struct platform_device *pdev,
@@ -115,14 +80,13 @@ static void s5pv210_fiqdbg_uart_putc(struct platform_device *pdev,
 static void fiq_enable(struct platform_device *pdev,
 			unsigned int fiq, bool enabled)
 {
-	struct irq_chip *chip = irq_get_chip(fiq);
-	struct irq_data *d = irq_get_irq_data(fiq);
+	struct irq_chip *chip = get_irq_chip(fiq);
 
 	vic_set_fiq(fiq, enabled);
 	if (enabled)
-		chip->irq_unmask(d);
+		chip->unmask(fiq);
 	else
-		chip->irq_mask(d);
+		chip->mask(fiq);
 }
 
 static void fiq_ack(struct platform_device *pdev, unsigned int fiq)
@@ -152,9 +116,7 @@ static int s5pv210_fiqdbg_uart_init(struct platform_device *pdev)
 	writel(0x808, base + S3C2443_DIVSLOT);
 	writel(0xc, base + S5P_UINTM);
 	writel(0xf, base + S5P_UINTP);
-#ifdef CONFIG_KEYBOARD_P1
-    g_base = base;
-#endif
+
 	return 0;
 }
 

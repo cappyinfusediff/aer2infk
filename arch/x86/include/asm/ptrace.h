@@ -73,7 +73,7 @@ struct pt_regs {
 	unsigned long r12;
 	unsigned long rbp;
 	unsigned long rbx;
-/* arguments: non interrupts/non tracing syscalls only save up to here*/
+/* arguments: non interrupts/non tracing syscalls only save upto here*/
 	unsigned long r11;
 	unsigned long r10;
 	unsigned long r9;
@@ -103,7 +103,7 @@ struct pt_regs {
 	unsigned long r12;
 	unsigned long bp;
 	unsigned long bx;
-/* arguments: non interrupts/non tracing syscalls only save up to here*/
+/* arguments: non interrupts/non tracing syscalls only save upto here*/
 	unsigned long r11;
 	unsigned long r10;
 	unsigned long r9;
@@ -136,7 +136,6 @@ struct cpuinfo_x86;
 struct task_struct;
 
 extern unsigned long profile_pc(struct pt_regs *regs);
-#define profile_pc profile_pc
 
 extern unsigned long
 convert_ip_to_linear(struct task_struct *child, struct pt_regs *regs);
@@ -187,20 +186,36 @@ static inline int v8086_mode(struct pt_regs *regs)
 #endif
 }
 
-#ifdef CONFIG_X86_32
-extern unsigned long kernel_stack_pointer(struct pt_regs *regs);
-#else
+/*
+ * X86_32 CPUs don't save ss and esp if the CPU is already in kernel mode
+ * when it traps.  The previous stack will be directly underneath the saved
+ * registers, and 'sp/ss' won't even have been saved. Thus the '&regs->sp'.
+ *
+ * This is valid only for kernel mode traps.
+ */
 static inline unsigned long kernel_stack_pointer(struct pt_regs *regs)
+{
+#ifdef CONFIG_X86_32
+	return (unsigned long)(&regs->sp);
+#else
+	return regs->sp;
+#endif
+}
+
+static inline unsigned long instruction_pointer(struct pt_regs *regs)
+{
+	return regs->ip;
+}
+
+static inline unsigned long frame_pointer(struct pt_regs *regs)
+{
+	return regs->bp;
+}
+
+static inline unsigned long user_stack_pointer(struct pt_regs *regs)
 {
 	return regs->sp;
 }
-#endif
-
-#define GET_IP(regs) ((regs)->ip)
-#define GET_FP(regs) ((regs)->bp)
-#define GET_USP(regs) ((regs)->sp)
-
-#include <asm-generic/ptrace.h>
 
 /* Query offset/name of register from its name/offset */
 extern int regs_query_register_offset(const char *name);

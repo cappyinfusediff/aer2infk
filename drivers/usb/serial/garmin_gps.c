@@ -973,7 +973,10 @@ static void garmin_close(struct usb_serial_port *port)
 	if (!serial)
 		return;
 
-	garmin_clear(garmin_data_p);
+	mutex_lock(&port->serial->disc_mutex);
+
+	if (!port->serial->disconnected)
+		garmin_clear(garmin_data_p);
 
 	/* shutdown our urbs */
 	usb_kill_urb(port->read_urb);
@@ -982,6 +985,8 @@ static void garmin_close(struct usb_serial_port *port)
 	/* keep reset state so we know that we must start a new session */
 	if (garmin_data_p->state != STATE_RESET)
 		garmin_data_p->state = STATE_DISCONNECTED;
+
+	mutex_unlock(&port->serial->disc_mutex);
 }
 
 
@@ -1192,7 +1197,7 @@ static void garmin_read_process(struct garmin_data *garmin_data_p,
 		   send it directly to the tty port */
 		if (garmin_data_p->flags & FLAGS_QUEUING) {
 			pkt_add(garmin_data_p, data, data_length);
-		} else if (bulk_data || 
+		} else if (bulk_data ||
 			   getLayerId(data) == GARMIN_LAYERID_APPL) {
 
 			spin_lock_irqsave(&garmin_data_p->lock, flags);
@@ -1264,6 +1269,7 @@ static void garmin_read_bulk_callback(struct urb *urb)
 		garmin_data_p->flags &= ~FLAGS_BULK_IN_ACTIVE;
 		spin_unlock_irqrestore(&garmin_data_p->lock, flags);
 	}
+	return;
 }
 
 

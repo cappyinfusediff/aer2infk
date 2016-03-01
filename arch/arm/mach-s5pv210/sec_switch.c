@@ -27,7 +27,6 @@
 #include <asm/mach/arch.h>
 #include <mach/param.h>
 #include <mach/gpio.h>
-#include <mach/gpio-p1.h>
 #include <mach/sec_switch.h>
 #include <mach/regs-clock.h>
 #include <mach/regs-gpio.h>
@@ -58,7 +57,13 @@ static void usb_switch_mode(struct sec_switch_struct *secsw, int mode)
 		if (secsw->pdata && secsw->pdata->set_vbus_status)
 			secsw->pdata->set_vbus_status((u8)USB_VBUS_CP_ON);
 		mdelay(10);
+	#if defined(CONFIG_S5PC110_KEPLER_BOARD) 
+		fsa9480_manual_switching(SWITCH_PORT_VAUDIO);
+	#elif defined(CONFIG_S5PC110_HAWK_BOARD) || defined (CONFIG_S5PC110_VIBRANTPLUS_BOARD)
 		fsa9480_manual_switching(SWITCH_PORT_AUDIO);
+	#else
+		fsa9480_manual_switching(SWITCH_PORT_AUDIO);
+	#endif
 	}
 }
 

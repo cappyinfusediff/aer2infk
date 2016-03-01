@@ -215,10 +215,8 @@ retry:
 	clear_bit(i, &port->write_urbs_free);
 	result = usb_submit_urb(urb, GFP_ATOMIC);
 	if (result) {
-		if (!port->port.console) {
-			dev_err(&port->dev, "%s - error submitting urb: %d\n",
+		dev_err(&port->dev, "%s - error submitting urb: %d\n",
 						__func__, result);
-		}
 		set_bit(i, &port->write_urbs_free);
 		spin_lock_irqsave(&port->lock, flags);
 		port->tx_bytes -= count;
@@ -345,7 +343,7 @@ void usb_serial_generic_process_read_urb(struct urb *urb)
 		tty_insert_flip_string(tty, ch, urb->actual_length);
 	else {
 		for (i = 0; i < urb->actual_length; i++, ch++) {
-			if (!usb_serial_handle_sysrq_char(port, *ch))
+			if (!usb_serial_handle_sysrq_char(tty, port, *ch))
 				tty_insert_flip_char(tty, *ch, TTY_NORMAL);
 		}
 	}
@@ -450,11 +448,12 @@ void usb_serial_generic_unthrottle(struct tty_struct *tty)
 EXPORT_SYMBOL_GPL(usb_serial_generic_unthrottle);
 
 #ifdef CONFIG_MAGIC_SYSRQ
-int usb_serial_handle_sysrq_char(struct usb_serial_port *port, unsigned int ch)
+int usb_serial_handle_sysrq_char(struct tty_struct *tty,
+			struct usb_serial_port *port, unsigned int ch)
 {
 	if (port->sysrq && port->port.console) {
 		if (ch && time_before(jiffies, port->sysrq)) {
-			handle_sysrq(ch);
+			handle_sysrq(ch, tty);
 			port->sysrq = 0;
 			return 1;
 		}
@@ -463,7 +462,8 @@ int usb_serial_handle_sysrq_char(struct usb_serial_port *port, unsigned int ch)
 	return 0;
 }
 #else
-int usb_serial_handle_sysrq_char(struct usb_serial_port *port, unsigned int ch)
+int usb_serial_handle_sysrq_char(struct tty_struct *tty,
+			struct usb_serial_port *port, unsigned int ch)
 {
 	return 0;
 }
@@ -538,7 +538,6 @@ void usb_serial_generic_disconnect(struct usb_serial *serial)
 	for (i = 0; i < serial->num_ports; ++i)
 		generic_cleanup(serial->port[i]);
 }
-EXPORT_SYMBOL_GPL(usb_serial_generic_disconnect);
 
 void usb_serial_generic_release(struct usb_serial *serial)
 {

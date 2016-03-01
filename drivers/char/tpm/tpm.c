@@ -47,16 +47,6 @@ enum tpm_duration {
 #define TPM_MAX_PROTECTED_ORDINAL 12
 #define TPM_PROTECTED_ORDINAL_MASK 0xFF
 
-/*
- * Bug workaround - some TPM's don't flush the most
- * recently changed pcr on suspend, so force the flush
- * with an extend to the selected _unused_ non-volatile pcr.
- */
-static int tpm_suspend_pcr;
-module_param_named(suspend_pcr, tpm_suspend_pcr, uint, 0644);
-MODULE_PARM_DESC(suspend_pcr,
-		 "PCR to use for dummy writes to faciltate flush on suspend.");
-
 static LIST_HEAD(tpm_chip_list);
 static DEFINE_SPINLOCK(driver_lock);
 static DECLARE_BITMAP(dev_mask, TPM_NUM_DEVICES);
@@ -382,9 +372,6 @@ static ssize_t tpm_transmit(struct tpm_chip *chip, const char *buf,
 	ssize_t rc;
 	u32 count, ordinal;
 	unsigned long stop;
-
-	if (bufsiz > TPM_BUFSIZE)
-		bufsiz = TPM_BUFSIZE;
 
 	count = be32_to_cpu(*((__be32 *) (buf + 2)));
 	ordinal = be32_to_cpu(*((__be32 *) (buf + 6)));
@@ -739,7 +726,7 @@ int tpm_pcr_read(u32 chip_num, int pcr_idx, u8 *res_buf)
 	if (chip == NULL)
 		return -ENODEV;
 	rc = __tpm_pcr_read(chip, pcr_idx, res_buf);
-	tpm_chip_put(chip);
+	module_put(chip->dev->driver->owner);
 	return rc;
 }
 EXPORT_SYMBOL_GPL(tpm_pcr_read);
@@ -778,26 +765,10 @@ int tpm_pcr_extend(u32 chip_num, int pcr_idx, const u8 *hash)
 	rc = transmit_cmd(chip, &cmd, EXTEND_PCR_RESULT_SIZE,
 			  "attempting extend a PCR value");
 
-	tpm_chip_put(chip);
+	module_put(chip->dev->driver->owner);
 	return rc;
 }
 EXPORT_SYMBOL_GPL(tpm_pcr_extend);
-
-int tpm_send(u32 chip_num, void *cmd, size_t buflen)
-{
-	struct tpm_chip *chip;
-	int rc;
-
-	chip = tpm_chip_find_get(chip_num);
-	if (chip == NULL)
-		return -ENODEV;
-
-	rc = transmit_cmd(chip, cmd, buflen, "attempting tpm_cmd");
-
-	tpm_chip_put(chip);
-	return rc;
-}
-EXPORT_SYMBOL_GPL(tpm_send);
 
 ssize_t tpm_show_pcrs(struct device *dev, struct device_attribute *attr,
 		      char *buf)
@@ -1005,7 +976,7 @@ int tpm_release(struct inode *inode, struct file *file)
 	struct tpm_chip *chip = file->private_data;
 
 	del_singleshot_timer_sync(&chip->user_read_timer);
-	flush_work_sync(&chip->work);
+	flush_scheduled_work();
 	file->private_data = NULL;
 	atomic_set(&chip->data_pending, 0);
 	kfree(chip->data_buffer);
@@ -1019,20 +990,17 @@ ssize_t tpm_write(struct file *file, const char __user *buf,
 		  size_t size, loff_t *off)
 {
 	struct tpm_chip *chip = file->private_data;
-	size_t in_size = size;
-	ssize_t out_size;
+	size_t in_size = size, out_size;
 
 	/* cannot perform a write until the read has cleared
-	   either via tpm_read or a user_read_timer timeout.
-	   This also prevents splitted buffered writes from blocking here.
-	*/
-	if (atomic_read(&chip->data_pending) != 0)
-		return -EBUSY;
-
-	if (in_size > TPM_BUFSIZE)
-		return -E2BIG;
+	   either via tpm_read or a user_read_timer timeout */
+	while (atomic_read(&chip->data_pending) != 0)
+		msleep(TPM_TIMEOUT);
 
 	mutex_lock(&chip->buffer_mutex);
+
+	if (in_size > TPM_BUFSIZE)
+		in_size = TPM_BUFSIZE;
 
 	if (copy_from_user
 	    (chip->data_buffer, (void __user *) buf, in_size)) {
@@ -1042,10 +1010,6 @@ ssize_t tpm_write(struct file *file, const char __user *buf,
 
 	/* atomic tpm command send and result receive */
 	out_size = tpm_transmit(chip, chip->data_buffer, TPM_BUFSIZE);
-	if (out_size < 0) {
-		mutex_unlock(&chip->buffer_mutex);
-		return out_size;
-	}
 
 	atomic_set(&chip->data_pending, out_size);
 	mutex_unlock(&chip->buffer_mutex);
@@ -1062,10 +1026,9 @@ ssize_t tpm_read(struct file *file, char __user *buf,
 {
 	struct tpm_chip *chip = file->private_data;
 	ssize_t ret_size;
-	int rc;
 
 	del_singleshot_timer_sync(&chip->user_read_timer);
-	flush_work_sync(&chip->work);
+	flush_scheduled_work();
 	ret_size = atomic_read(&chip->data_pending);
 	atomic_set(&chip->data_pending, 0);
 	if (ret_size > 0) {	/* relay data */
@@ -1073,11 +1036,8 @@ ssize_t tpm_read(struct file *file, char __user *buf,
 			ret_size = size;
 
 		mutex_lock(&chip->buffer_mutex);
-		rc = copy_to_user(buf, chip->data_buffer, ret_size);
-		memset(chip->data_buffer, 0, ret_size);
-		if (rc)
+		if (copy_to_user(buf, chip->data_buffer, ret_size))
 			ret_size = -EFAULT;
-
 		mutex_unlock(&chip->buffer_mutex);
 	}
 
@@ -1116,6 +1076,18 @@ static struct tpm_input_header savestate_header = {
 	.length = cpu_to_be32(10),
 	.ordinal = TPM_ORD_SAVESTATE
 };
+
+/* Bug workaround - some TPM's don't flush the most
+ * recently changed pcr on suspend, so force the flush
+ * with an extend to the selected _unused_ non-volatile pcr.
+ */
+static int tpm_suspend_pcr;
+static int __init tpm_suspend_setup(char *str)
+{
+	get_option(&str, &tpm_suspend_pcr);
+	return 1;
+}
+__setup("tpm_suspend_pcr=", tpm_suspend_setup);
 
 /*
  * We are about to suspend. Save the TPM state

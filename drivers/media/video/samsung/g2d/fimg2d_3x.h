@@ -199,3 +199,4 @@ static int  sec_g2d_ioctl(struct inode *inode,
 static u32 sec_g2d_poll(struct file *file, poll_table *wait);
 
 #endif /*_SEC_G2D_DRIVER_H_*/
+

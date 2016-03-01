@@ -250,7 +250,7 @@ static int kick_a_thread(void)
 			dirty_zn_cnt = atomic_long_read(&c->dirty_zn_cnt);
 
 			if (!dirty_zn_cnt || c->cmt_state == COMMIT_BROKEN ||
-			    c->ro_mount || c->ro_error) {
+			    c->ro_media) {
 				mutex_unlock(&c->umount_mutex);
 				continue;
 			}
@@ -277,9 +277,8 @@ static int kick_a_thread(void)
 	return 0;
 }
 
-int ubifs_shrinker(struct shrinker *shrink, struct shrink_control *sc)
+int ubifs_shrinker(struct shrinker *shrink, int nr, gfp_t gfp_mask)
 {
-	int nr = sc->nr_to_scan;
 	int freed, contention = 0;
 	long clean_zn_cnt = atomic_long_read(&ubifs_clean_zn_cnt);
 

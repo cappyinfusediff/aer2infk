@@ -18,6 +18,7 @@
 #include <linux/percpu.h>
 #include <linux/profile.h>
 #include <linux/sched.h>
+#include <linux/tick.h>
 
 #include <asm/irq_regs.h>
 
@@ -48,7 +49,7 @@ struct tick_device *tick_get_device(int cpu)
  */
 int tick_is_oneshot_available(void)
 {
-	struct clock_event_device *dev = __this_cpu_read(tick_cpu_device.evtdev);
+	struct clock_event_device *dev = __get_cpu_var(tick_cpu_device).evtdev;
 
 	if (!dev || !(dev->features & CLOCK_EVT_FEAT_ONESHOT))
 		return 0;
@@ -323,7 +324,6 @@ static void tick_shutdown(unsigned int *cpup)
 		 */
 		dev->mode = CLOCK_EVT_MODE_UNUSED;
 		clockevents_exchange_device(dev, NULL);
-		dev->event_handler = clockevents_handle_noop;
 		td->evtdev = NULL;
 	}
 	raw_spin_unlock_irqrestore(&tick_device_lock, flags);

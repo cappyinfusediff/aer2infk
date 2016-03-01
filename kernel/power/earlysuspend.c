@@ -26,15 +26,26 @@
 enum {
 	DEBUG_USER_STATE = 1U << 0,
 	DEBUG_SUSPEND = 1U << 2,
-	DEBUG_VERBOSE = 1U << 3,
 };
 static int debug_mask = DEBUG_USER_STATE;
 module_param_named(debug_mask, debug_mask, int, S_IRUGO | S_IWUSR | S_IWGRP);
 
+extern struct wake_lock sync_wake_lock;
+extern struct workqueue_struct *sync_work_queue;
+
+#if defined(CONFIG_CPU_DIDLE) && defined(CONFIG_CPU_FREQ)
+#include <linux/cpufreq.h>
+#include <mach/cpu-freq-v210.h>
+extern volatile int s5p_rp_is_running;
+static bool dvfs_fixed_by_rp;
+#endif
+
 static DEFINE_MUTEX(early_suspend_lock);
 static LIST_HEAD(early_suspend_handlers);
+static void sync_system(struct work_struct *work);
 static void early_suspend(struct work_struct *work);
 static void late_resume(struct work_struct *work);
+static DECLARE_WORK(sync_system_work, sync_system);
 static DECLARE_WORK(early_suspend_work, early_suspend);
 static DECLARE_WORK(late_resume_work, late_resume);
 static DEFINE_SPINLOCK(state_lock);
@@ -44,6 +55,13 @@ enum {
 	SUSPEND_REQUESTED_AND_SUSPENDED = SUSPEND_REQUESTED | SUSPENDED,
 };
 static int state;
+
+static void sync_system(struct work_struct *work)
+{
+	wake_lock(&sync_wake_lock);
+	sys_sync();
+	wake_unlock(&sync_wake_lock);
+}
 
 void register_early_suspend(struct early_suspend *handler)
 {
@@ -95,18 +113,26 @@ static void early_suspend(struct work_struct *work)
 	if (debug_mask & DEBUG_SUSPEND)
 		pr_info("early_suspend: call handlers\n");
 	list_for_each_entry(pos, &early_suspend_handlers, link) {
-		if (pos->suspend != NULL) {
-			if (debug_mask & DEBUG_VERBOSE)
-				pr_info("early_suspend: calling %pf\n", pos->suspend);
+		if (pos->suspend != NULL)
 			pos->suspend(pos);
-		}
 	}
 	mutex_unlock(&early_suspend_lock);
 
 	if (debug_mask & DEBUG_SUSPEND)
 		pr_info("early_suspend: sync\n");
 
-	sys_sync();
+	queue_work(sync_work_queue, &sync_system_work);
+
+#if defined(CONFIG_CPU_DIDLE) && defined(CONFIG_CPU_FREQ)
+	if (s5p_rp_is_running) {
+		struct cpufreq_policy *policy = cpufreq_cpu_get(0);
+		if (policy == NULL)
+			return;
+		cpufreq_driver_target(policy, ULP_FREQ, DISABLE_FURTHER_CPUFREQ);
+		dvfs_fixed_by_rp = true;
+	}
+#endif
+
 abort:
 	spin_lock_irqsave(&state_lock, irqflags);
 	if (state == SUSPEND_REQUESTED_AND_SUSPENDED)
@@ -133,18 +159,32 @@ static void late_resume(struct work_struct *work)
 			pr_info("late_resume: abort, state %d\n", state);
 		goto abort;
 	}
+
+#if defined(CONFIG_CPU_DIDLE) && defined(CONFIG_CPU_FREQ)
+	if (dvfs_fixed_by_rp) {
+		struct cpufreq_policy *policy = cpufreq_cpu_get(0);
+		if (policy == NULL)
+			return;
+		cpufreq_driver_target(policy, ULP_FREQ, ENABLE_FURTHER_CPUFREQ);
+		dvfs_fixed_by_rp = false;
+	}
+#endif
+
+#if defined (CONFIG_S5PC110_HAWK_BOARD) || defined(CONFIG_S5PC110_VIBRANTPLUS_BOARD)
+	printk(KERN_DEBUG "late_resume: call handlers\n");
+	list_for_each_entry_reverse(pos, &early_suspend_handlers, link)
+	if (pos->resume != NULL)
+		pos->resume(pos);
+	printk(KERN_DEBUG "late_resume: done\n");
+#else
 	if (debug_mask & DEBUG_SUSPEND)
 		pr_info("late_resume: call handlers\n");
-	list_for_each_entry_reverse(pos, &early_suspend_handlers, link) {
-		if (pos->resume != NULL) {
-			if (debug_mask & DEBUG_VERBOSE)
-				pr_info("late_resume: calling %pf\n", pos->resume);
-
+	list_for_each_entry_reverse(pos, &early_suspend_handlers, link)
+		if (pos->resume != NULL)
 			pos->resume(pos);
-		}
-	}
 	if (debug_mask & DEBUG_SUSPEND)
 		pr_info("late_resume: done\n");
+#endif
 abort:
 	mutex_unlock(&early_suspend_lock);
 }
@@ -161,6 +201,15 @@ void request_suspend_state(suspend_state_t new_state)
 		struct rtc_time tm;
 		getnstimeofday(&ts);
 		rtc_time_to_tm(ts.tv_sec, &tm);
+#if defined (CONFIG_S5PC110_HAWK_BOARD)
+		pr_info("request_suspend_state: %s (%d->%d) at %lld "
+			"(%d-%02d-%02d %02d:%02d:%02d.%09lu UTC) [%d] \n",
+			new_state != PM_SUSPEND_ON ? "sleep" : "wakeup",
+			requested_suspend_state, new_state,
+			ktime_to_ns(ktime_get()),
+			tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+			tm.tm_hour, tm.tm_min, tm.tm_sec, ts.tv_nsec, old_sleep);
+#else
 		pr_info("request_suspend_state: %s (%d->%d) at %lld "
 			"(%d-%02d-%02d %02d:%02d:%02d.%09lu UTC)\n",
 			new_state != PM_SUSPEND_ON ? "sleep" : "wakeup",
@@ -168,6 +217,7 @@ void request_suspend_state(suspend_state_t new_state)
 			ktime_to_ns(ktime_get()),
 			tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
 			tm.tm_hour, tm.tm_min, tm.tm_sec, ts.tv_nsec);
+#endif
 	}
 	if (!old_sleep && new_state != PM_SUSPEND_ON) {
 		state |= SUSPEND_REQUESTED;

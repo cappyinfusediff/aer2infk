@@ -160,7 +160,7 @@ void s3cfb_readjust_pixclock(struct s3cfb_global *ctrl, u32 src_clk, u32 div)
 
 	pixclock = KHZ2PICOS(src_clk / 1000) * div;
 	dev_info(ctrl->dev, "pixclock adjusted from %d to %d\n",
-		 ctrl->fb[0]->var.pixclock, pixclock);
+		ctrl->fb[0]->var.pixclock, pixclock);
 	for (i = 0; i < pdata->nr_wins; i++)
 		ctrl->fb[i]->var.pixclock = pixclock;
 }
@@ -175,15 +175,10 @@ int s3cfb_set_clock(struct s3cfb_global *ctrl)
 	/* fixed clock source: hclk */
 	cfg = readl(ctrl->regs + S3C_VIDCON0);
 	cfg &= ~(S3C_VIDCON0_CLKSEL_MASK | S3C_VIDCON0_CLKVALUP_MASK |
-		 S3C_VIDCON0_VCLKEN_MASK | S3C_VIDCON0_CLKDIR_MASK |
-		 S3C_VIDCON0_CLKVAL_F(-1));
-#if defined(CONFIG_FB_S3C_MDNIE) && defined(CONFIG_FB_S3C_LVDS)
-	cfg |= (S3C_VIDCON0_CLKSEL_SCLK | S3C_VIDCON0_CLKVALUP_ALWAYS |
-		S3C_VIDCON0_VCLKEN_FREERUN);
-#else
+		S3C_VIDCON0_VCLKEN_MASK | S3C_VIDCON0_CLKDIR_MASK |
+		S3C_VIDCON0_CLKVAL_F(-1));
 	cfg |= (S3C_VIDCON0_CLKVALUP_ALWAYS | S3C_VIDCON0_VCLKEN_NORMAL |
 		S3C_VIDCON0_CLKDIR_DIVIDED);
-#endif
 
 
 	if (strcmp(pdata->clk_name, "sclk_fimd") == 0) {
@@ -318,7 +313,7 @@ int s3cfb_set_vsync_interrupt(struct s3cfb_global *ctrl, int enable)
 		dev_dbg(ctrl->dev, "vsync interrupt is on\n");
 		cfg &= ~S3C_VIDINTCON0_FRAMESEL0_MASK;
 		cfg |= S3C_VIDINTCON0_INTFRMEN_ENABLE |
-		       S3C_VIDINTCON0_FRAMESEL0_VSYNC;
+			S3C_VIDINTCON0_FRAMESEL0_VSYNC;
 	} else {
 		dev_dbg(ctrl->dev, "vsync interrupt is off\n");
 		cfg &= ~S3C_VIDINTCON0_INTFRMEN_ENABLE;
@@ -761,14 +756,3 @@ int s3cfb_set_chroma_key(struct s3cfb_global *ctrl, int id)
 	return 0;
 }
 
-#if defined(CONFIG_FB_S3C_MDNIE)
-int s3cfb_ielcd_enable(struct s3cfb_global *ctrl, int en)
-{
-	if(en)
-		writel(0x3, ctrl->regs + S3C_LCDREG(0x27c));
-	else
-		writel(0x0, ctrl->regs + S3C_LCDREG(0x27c));
-
-	return 0;
-}
-#endif

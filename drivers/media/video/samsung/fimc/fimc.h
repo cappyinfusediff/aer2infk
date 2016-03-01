@@ -37,11 +37,7 @@
 #define FIMC_PHYBUFS		4
 #define FIMC_OUTBUFS		3
 #define FIMC_INQUEUES		10
-#ifdef CONFIG_MACH_ARIES
-#define FIMC_MAX_CTXS		1
-#else // CONFIG_MACH_P1
 #define FIMC_MAX_CTXS		2
-#endif
 #define FIMC_TPID		3
 #define FIMC_CAPBUFS		16
 #define FIMC_ONESHOT_TIMEOUT	200
@@ -256,6 +252,7 @@ struct fimc_outinfo {
 	int			last_ctx;
 	spinlock_t		lock_in;
 	spinlock_t		lock_out;
+	struct mutex            lock_fimc_out; // added patch
 	struct fimc_idx		inq[FIMC_INQUEUES];
 	struct fimc_ctx		ctx[FIMC_MAX_CTXS];
 	struct fimc_ctx_idx	idxs;
@@ -371,6 +368,11 @@ struct fimc_effect {
 /* fimc controller abstration */
 struct fimc_control {
 	int				id;		/* controller id */
+
+	#ifdef CONFIG_VIDEO_M5MO //NAGSM_HQ_CAMERA_LEESUNGKOO_20101231 : to support two type front camera	
+	int				device_onoff;	/* check flag for current state */
+	#endif
+	
 	char				name[16];
 	atomic_t			in_use;
 	void __iomem			*regs;		/* register i/o */
@@ -385,9 +387,7 @@ struct fimc_control {
 	wait_queue_head_t		wq;
 	struct device			*dev;
 	int				irq;
-#if defined (CONFIG_MACH_P1) || defined (CONFIG_SAMSUNG_YPG1)
-	int	vt_mode;
-#endif
+
 	/* v4l2 related */
 	struct video_device		*vd;
 	struct v4l2_device		v4l2_dev;
@@ -422,7 +422,7 @@ struct fimc_prv_data {
 };
 
 /* debug macro */
-#define FIMC_LOG_DEFAULT	(FIMC_LOG_WARN | FIMC_LOG_ERR)
+#define FIMC_LOG_DEFAULT	(FIMC_LOG_WARN | FIMC_LOG_ERR | FIMC_LOG_INFO_L1)
 
 #define FIMC_DEBUG(fmt, ...)						\
 	do {								\
@@ -481,6 +481,9 @@ extern struct fimc_limit fimc50_limits[FIMC_DEVICES];
 extern void s3c_csis_start(int lanes, int settle, int align,
 					int width, int height,
 					int pixel_format);
+#ifdef CONFIG_VIDEO_M5MO //NAGSM_HQ_CAMERA_LEESUNGKOO_20101111
+extern void s3c_csis_stop();
+#endif
 extern int fimc_dma_alloc(struct fimc_control *ctrl,
 					struct fimc_buf_set *bs,
 					int i, int align);
@@ -511,6 +514,9 @@ extern int fimc_try_fmt_vid_capture(struct file *file, void *fh,
 extern int fimc_reqbufs_capture(void *fh, struct v4l2_requestbuffers *b);
 extern int fimc_querybuf_capture(void *fh, struct v4l2_buffer *b);
 extern int fimc_g_ctrl_capture(void *fh, struct v4l2_control *c);
+#if defined(CONFIG_VIDEO_M5MO)
+extern int fimc_g_ext_ctrls_capture(void *fh, struct v4l2_ext_controls *c);
+#endif
 extern int fimc_s_ctrl_capture(void *fh, struct v4l2_control *c);
 extern int fimc_s_ext_ctrls_capture(void *fh, struct v4l2_ext_controls *c);
 extern int fimc_cropcap_capture(void *fh, struct v4l2_cropcap *a);

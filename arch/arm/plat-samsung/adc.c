@@ -143,12 +143,10 @@ int s3c_adc_start(struct s3c_adc_client *client,
 		return -EINVAL;
 	}
 
-	spin_lock_irqsave(&adc->lock, flags);
-
-	if (client->is_ts && adc->ts_pend) {
-		spin_unlock_irqrestore(&adc->lock, flags);
+	if (client->is_ts && adc->ts_pend)
 		return -EAGAIN;
-	}
+
+	spin_lock_irqsave(&adc->lock, flags);
 
 	client->channel = channel;
 	client->nr_samples = nr_samples;
@@ -437,6 +435,7 @@ static int s3c_adc_suspend(struct platform_device *pdev, pm_message_t state)
 static int s3c_adc_resume(struct platform_device *pdev)
 {
 	struct adc_device *adc = platform_get_drvdata(pdev);
+	unsigned long flags;
 
 	clk_enable(adc->clk);
 	enable_irq(adc->irq);

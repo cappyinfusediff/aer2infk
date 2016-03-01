@@ -18,6 +18,7 @@
 #include <linux/percpu.h>
 #include <linux/profile.h>
 #include <linux/sched.h>
+#include <linux/tick.h>
 
 #include "tick-internal.h"
 
@@ -66,17 +67,12 @@ static void tick_broadcast_start_periodic(struct clock_event_device *bc)
  */
 int tick_check_broadcast_device(struct clock_event_device *dev)
 {
-	struct clock_event_device *cur = tick_broadcast_device.evtdev;
-
-	if ((dev->features & CLOCK_EVT_FEAT_DUMMY) ||
-	    (tick_broadcast_device.evtdev &&
+	if ((tick_broadcast_device.evtdev &&
 	     tick_broadcast_device.evtdev->rating >= dev->rating) ||
 	     (dev->features & CLOCK_EVT_FEAT_C3STOP))
 		return 0;
 
-	clockevents_exchange_device(tick_broadcast_device.evtdev, dev);
-	if (cur)
-		cur->event_handler = clockevents_handle_noop;
+	clockevents_exchange_device(NULL, dev);
 	tick_broadcast_device.evtdev = dev;
 	if (!cpumask_empty(tick_get_broadcast_mask()))
 		tick_broadcast_start_periodic(dev);
@@ -192,7 +188,7 @@ static void tick_handle_periodic_broadcast(struct clock_event_device *dev)
 	/*
 	 * Setup the next period for devices, which do not have
 	 * periodic mode. We read dev->next_event first and add to it
-	 * when the event already expired. clockevents_program_event()
+	 * when the event alrady expired. clockevents_program_event()
 	 * sets dev->next_event only when the event is really
 	 * programmed to the device.
 	 */
@@ -396,15 +392,7 @@ void tick_check_oneshot_broadcast(int cpu)
 	if (cpumask_test_cpu(cpu, to_cpumask(tick_broadcast_oneshot_mask))) {
 		struct tick_device *td = &per_cpu(tick_cpu_device, cpu);
 
-		/*
-		 * We might be in the middle of switching over from
-		 * periodic to oneshot. If the CPU has not yet
-		 * switched over, leave the device alone.
-		 */
-		if (td->mode == TICKDEV_MODE_ONESHOT) {
-			clockevents_set_mode(td->evtdev,
-					     CLOCK_EVT_MODE_ONESHOT);
-		}
+		clockevents_set_mode(td->evtdev, CLOCK_EVT_MODE_ONESHOT);
 	}
 }
 
@@ -469,27 +457,23 @@ void tick_broadcast_oneshot_control(unsigned long reason)
 	unsigned long flags;
 	int cpu;
 
+	raw_spin_lock_irqsave(&tick_broadcast_lock, flags);
+
 	/*
 	 * Periodic mode does not care about the enter/exit of power
 	 * states
 	 */
 	if (tick_broadcast_device.mode == TICKDEV_MODE_PERIODIC)
-		return;
+		goto out;
 
-	/*
-	 * We are called with preemtion disabled from the depth of the
-	 * idle code, so we can't be moved away.
-	 */
+	bc = tick_broadcast_device.evtdev;
 	cpu = smp_processor_id();
 	td = &per_cpu(tick_cpu_device, cpu);
 	dev = td->evtdev;
 
 	if (!(dev->features & CLOCK_EVT_FEAT_C3STOP))
-		return;
+		goto out;
 
-	bc = tick_broadcast_device.evtdev;
-
-	raw_spin_lock_irqsave(&tick_broadcast_lock, flags);
 	if (reason == CLOCK_EVT_NOTIFY_BROADCAST_ENTER) {
 		if (!cpumask_test_cpu(cpu, tick_get_broadcast_oneshot_mask())) {
 			cpumask_set_cpu(cpu, tick_get_broadcast_oneshot_mask());
@@ -506,6 +490,8 @@ void tick_broadcast_oneshot_control(unsigned long reason)
 				tick_program_event(dev->next_event, 1);
 		}
 	}
+
+out:
 	raw_spin_unlock_irqrestore(&tick_broadcast_lock, flags);
 }
 

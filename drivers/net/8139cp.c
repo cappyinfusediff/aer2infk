@@ -322,7 +322,7 @@ struct cp_dma_stats {
 	__le32			rx_ok_mcast;
 	__le16			tx_abort;
 	__le16			tx_underrun;
-} __packed;
+} __attribute__((packed));
 
 struct cp_extra_stats {
 	unsigned long		rx_frags;
@@ -559,7 +559,7 @@ rx_status_loop:
 		if (cp_rx_csum_ok(status))
 			skb->ip_summed = CHECKSUM_UNNECESSARY;
 		else
-			skb_checksum_none_assert(skb);
+			skb->ip_summed = CHECKSUM_NONE;
 
 		skb_put(skb, len);
 
@@ -752,13 +752,14 @@ static netdev_tx_t cp_start_xmit (struct sk_buff *skb,
 	}
 
 #if CP_VLAN_TAG_USED
-	if (vlan_tx_tag_present(skb))
+	if (cp->vlgrp && vlan_tx_tag_present(skb))
 		vlan_tag = TxVlanTag | swab16(vlan_tx_tag_get(skb));
 #endif
 
 	entry = cp->tx_head;
 	eor = (entry == (CP_TX_RING_SIZE - 1)) ? RingEnd : 0;
-	mss = skb_shinfo(skb)->gso_size;
+	if (dev->features & NETIF_F_TSO)
+		mss = skb_shinfo(skb)->gso_size;
 
 	if (skb_shinfo(skb)->nr_frags == 0) {
 		struct cp_desc *txd = &cp->tx_ring[entry];
@@ -992,11 +993,6 @@ static inline void cp_start_hw (struct cp_private *cp)
 	cpw8(Cmd, RxOn | TxOn);
 }
 
-static void cp_enable_irq(struct cp_private *cp)
-{
-	cpw16_f(IntrMask, cp_intr_mask);
-}
-
 static void cp_init_hw (struct cp_private *cp)
 {
 	struct net_device *dev = cp->dev;
@@ -1035,6 +1031,8 @@ static void cp_init_hw (struct cp_private *cp)
 	cpw32_f(TxRingAddr + 4, (ring_dma >> 16) >> 16);
 
 	cpw16(MultiIntr, 0);
+
+	cpw16_f(IntrMask, cp_intr_mask);
 
 	cpw8_f(Cfg9346, Cfg9346_Lock);
 }
@@ -1166,8 +1164,6 @@ static int cp_open (struct net_device *dev)
 	rc = request_irq(dev->irq, cp_interrupt, IRQF_SHARED, dev->name, dev);
 	if (rc)
 		goto err_out_hw;
-
-	cp_enable_irq(cp);
 
 	netif_carrier_off(dev);
 	mii_check_media(&cp->mii_if, netif_msg_link(cp), true);
@@ -1420,23 +1416,32 @@ static void cp_set_msglevel(struct net_device *dev, u32 value)
 	cp->msg_enable = value;
 }
 
-static int cp_set_features(struct net_device *dev, u32 features)
+static u32 cp_get_rx_csum(struct net_device *dev)
 {
 	struct cp_private *cp = netdev_priv(dev);
-	unsigned long flags;
+	return (cpr16(CpCmd) & RxChkSum) ? 1 : 0;
+}
 
-	if (!((dev->features ^ features) & NETIF_F_RXCSUM))
-		return 0;
+static int cp_set_rx_csum(struct net_device *dev, u32 data)
+{
+	struct cp_private *cp = netdev_priv(dev);
+	u16 cmd = cp->cpcmd, newcmd;
 
-	spin_lock_irqsave(&cp->lock, flags);
+	newcmd = cmd;
 
-	if (features & NETIF_F_RXCSUM)
-		cp->cpcmd |= RxChkSum;
+	if (data)
+		newcmd |= RxChkSum;
 	else
-		cp->cpcmd &= ~RxChkSum;
+		newcmd &= ~RxChkSum;
 
-	cpw16_f(CpCmd, cp->cpcmd);
-	spin_unlock_irqrestore(&cp->lock, flags);
+	if (newcmd != cmd) {
+		unsigned long flags;
+
+		spin_lock_irqsave(&cp->lock, flags);
+		cp->cpcmd = newcmd;
+		cpw16_f(CpCmd, newcmd);
+		spin_unlock_irqrestore(&cp->lock, flags);
+	}
 
 	return 0;
 }
@@ -1549,6 +1554,11 @@ static const struct ethtool_ops cp_ethtool_ops = {
 	.get_link		= ethtool_op_get_link,
 	.get_msglevel		= cp_get_msglevel,
 	.set_msglevel		= cp_set_msglevel,
+	.get_rx_csum		= cp_get_rx_csum,
+	.set_rx_csum		= cp_set_rx_csum,
+	.set_tx_csum		= ethtool_op_set_tx_csum, /* local! */
+	.set_sg			= ethtool_op_set_sg,
+	.set_tso		= ethtool_op_set_tso,
 	.get_regs		= cp_get_regs,
 	.get_wol		= cp_get_wol,
 	.set_wol		= cp_set_wol,
@@ -1821,7 +1831,6 @@ static const struct net_device_ops cp_netdev_ops = {
 	.ndo_do_ioctl		= cp_ioctl,
 	.ndo_start_xmit		= cp_start_xmit,
 	.ndo_tx_timeout		= cp_tx_timeout,
-	.ndo_set_features	= cp_set_features,
 #if CP_VLAN_TAG_USED
 	.ndo_vlan_rx_register	= cp_vlan_rx_register,
 #endif
@@ -1925,9 +1934,6 @@ static int cp_init_one (struct pci_dev *pdev, const struct pci_device_id *ent)
 	cp->cpcmd = (pci_using_dac ? PCIDAC : 0) |
 		    PCIMulRW | RxChkSum | CpRxOn | CpTxOn;
 
-	dev->features |= NETIF_F_RXCSUM;
-	dev->hw_features |= NETIF_F_RXCSUM;
-
 	regs = ioremap(pciaddr, CP_REGS_SIZE);
 	if (!regs) {
 		rc = -EIO;
@@ -1960,8 +1966,9 @@ static int cp_init_one (struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (pci_using_dac)
 		dev->features |= NETIF_F_HIGHDMA;
 
-	/* disabled by default until verified */
-	dev->hw_features |= NETIF_F_SG | NETIF_F_IP_CSUM | NETIF_F_TSO;
+#if 0 /* disabled by default until verified */
+	dev->features |= NETIF_F_TSO;
+#endif
 
 	dev->irq = pdev->irq;
 
@@ -2057,7 +2064,6 @@ static int cp_resume (struct pci_dev *pdev)
 	/* FIXME: sh*t may happen if the Rx ring buffer is depleted */
 	cp_init_rings_index (cp);
 	cp_init_hw (cp);
-	cp_enable_irq(cp);
 	netif_start_queue (dev);
 
 	spin_lock_irqsave (&cp->lock, flags);

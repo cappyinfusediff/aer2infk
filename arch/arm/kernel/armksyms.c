@@ -52,10 +52,6 @@ extern void fpundefinstr(void);
 
 EXPORT_SYMBOL(__backtrace);
 
-	/* platform dependent support */
-EXPORT_SYMBOL(__udelay);
-EXPORT_SYMBOL(__const_udelay);
-
 	/* networking */
 EXPORT_SYMBOL(csum_partial);
 EXPORT_SYMBOL(csum_partial_copy_from_user);
@@ -91,10 +87,6 @@ EXPORT_SYMBOL(memmove);
 EXPORT_SYMBOL(memchr);
 EXPORT_SYMBOL(__memzero);
 
-	/* user mem (segment) */
-EXPORT_SYMBOL(__strnlen_user);
-EXPORT_SYMBOL(__strncpy_from_user);
-
 #ifdef CONFIG_MMU
 EXPORT_SYMBOL(copy_page);
 
@@ -111,9 +103,6 @@ EXPORT_SYMBOL(__put_user_2);
 EXPORT_SYMBOL(__put_user_4);
 EXPORT_SYMBOL(__put_user_8);
 #endif
-
-	/* crypto hash */
-EXPORT_SYMBOL(sha_transform);
 
 	/* gcc lib functions */
 EXPORT_SYMBOL(__ashldi3);
@@ -140,18 +129,24 @@ EXPORT_SYMBOL(__aeabi_ulcmp);
 #endif
 
 	/* bitops */
-EXPORT_SYMBOL(_set_bit);
-EXPORT_SYMBOL(_test_and_set_bit);
-EXPORT_SYMBOL(_clear_bit);
-EXPORT_SYMBOL(_test_and_clear_bit);
-EXPORT_SYMBOL(_change_bit);
-EXPORT_SYMBOL(_test_and_change_bit);
+EXPORT_SYMBOL(_set_bit_le);
+EXPORT_SYMBOL(_test_and_set_bit_le);
+EXPORT_SYMBOL(_clear_bit_le);
+EXPORT_SYMBOL(_test_and_clear_bit_le);
+EXPORT_SYMBOL(_change_bit_le);
+EXPORT_SYMBOL(_test_and_change_bit_le);
 EXPORT_SYMBOL(_find_first_zero_bit_le);
 EXPORT_SYMBOL(_find_next_zero_bit_le);
 EXPORT_SYMBOL(_find_first_bit_le);
 EXPORT_SYMBOL(_find_next_bit_le);
 
 #ifdef __ARMEB__
+EXPORT_SYMBOL(_set_bit_be);
+EXPORT_SYMBOL(_test_and_set_bit_be);
+EXPORT_SYMBOL(_clear_bit_be);
+EXPORT_SYMBOL(_test_and_clear_bit_be);
+EXPORT_SYMBOL(_change_bit_be);
+EXPORT_SYMBOL(_test_and_change_bit_be);
 EXPORT_SYMBOL(_find_first_zero_bit_be);
 EXPORT_SYMBOL(_find_next_zero_bit_be);
 EXPORT_SYMBOL(_find_first_bit_be);
@@ -159,12 +154,6 @@ EXPORT_SYMBOL(_find_next_bit_be);
 #endif
 
 #ifdef CONFIG_FUNCTION_TRACER
-#ifdef CONFIG_OLD_MCOUNT
 EXPORT_SYMBOL(mcount);
-#endif
 EXPORT_SYMBOL(__gnu_mcount_nc);
-#endif
-
-#ifdef CONFIG_ARM_PATCH_PHYS_VIRT
-EXPORT_SYMBOL(__pv_phys_offset);
 #endif

@@ -304,6 +304,7 @@ struct biovec_slab {
 };
 
 extern struct bio_set *fs_bio_set;
+extern struct biovec_slab bvec_slabs[BIOVEC_NR_POOLS] __read_mostly;
 
 /*
  * a small number of entries is fine, not going to be performance critical.
@@ -341,15 +342,8 @@ static inline void bvec_kunmap_irq(char *buffer, unsigned long *flags)
 }
 
 #else
-static inline char *bvec_kmap_irq(struct bio_vec *bvec, unsigned long *flags)
-{
-	return page_address(bvec->bv_page) + bvec->bv_offset;
-}
-
-static inline void bvec_kunmap_irq(char *buffer, unsigned long *flags)
-{
-	*flags = 0;
-}
+#define bvec_kmap_irq(bvec, flags)	(page_address((bvec)->bv_page) + (bvec)->bv_offset)
+#define bvec_kunmap_irq(buf, flags)	do { *(flags) = 0; } while (0)
 #endif
 
 static inline char *__bio_kmap_irq(struct bio *bio, unsigned short idx,

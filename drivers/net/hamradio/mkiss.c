@@ -747,7 +747,7 @@ static int mkiss_open(struct tty_struct *tty)
 
 	spin_lock_init(&ax->buflock);
 	atomic_set(&ax->refcnt, 1);
-	sema_init(&ax->dead_sem, 0);
+	init_MUTEX_LOCKED(&ax->dead_sem);
 
 	ax->tty = tty;
 	tty->disc_data = ax;

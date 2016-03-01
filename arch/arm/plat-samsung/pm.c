@@ -28,12 +28,25 @@
 #include <mach/regs-irq.h>
 #include <asm/fiq_glue.h>
 #include <asm/irq.h>
+#include <mach/gpio.h>
+#include <plat/gpio-cfg.h>
+#include <mach/gpio-aries.h>
 
 #include <plat/pm.h>
 #include <plat/irq-eint-group.h>
 #include <mach/pm-core.h>
 
 /* for external use */
+
+/* For checking pending interrupt */
+#define S5PV210_GPIOREG(x)		(S5P_VA_GPIO + (x))
+#define S5PV210_EINT1PEND			S5PV210_GPIOREG(0xF44)	/* EINT31[0] ~  EINT31[7] */
+#define S5PV210_EINT2PEND			S5PV210_GPIOREG(0xF48)	/* EINT32[0] ~  EINT32[7] */
+#if defined (CONFIG_S5PC110_HAWK_BOARD) 
+#define EINTPEND1_BIT_ALSINT		(1 << 2)
+#endif
+#define EINTPEND1_BIT_ONEDRAM		(1 << 3)
+#define EINTPEND2_BIT_MICROUSB	(1 << 7)
 
 unsigned long s3c_pm_flags;
 
@@ -56,19 +69,14 @@ struct pmstats {
 
 static struct pmstats *pmstats;
 static struct pmstats *pmstats_last;
-#if defined (CONFIG_MACH_ARIES) && !defined (CONFIG_SAMSUNG_YPG1)
-#define PMSTATS_LEN 4096
-#else // CONFIG_MACH_P1 / CONFIG_SAMSUNG_YPG1
-#define PMSTATS_LEN sizeof(struct pmstats)
-#endif
 
 static ssize_t pmstats_read(struct file *file, char __user *buf,
 			    size_t len, loff_t *offset)
 {
 	if (*offset != 0)
 		return 0;
-	if (len > PMSTATS_LEN)
-		len = PMSTATS_LEN;
+	if (len > 4096)
+		len = 4096;
 
 	if (copy_to_user(buf, file->private_data, len))
 		return -EFAULT;
@@ -93,17 +101,17 @@ void __init pmstats_init(void)
 {
 	pr_info("pmstats at %08x\n", pm_debug_scratchpad);
 	if (pm_debug_scratchpad)
-		pmstats = ioremap(pm_debug_scratchpad, PMSTATS_LEN);
+		pmstats = ioremap(pm_debug_scratchpad, 4096);
 	else
-		pmstats = kzalloc(PMSTATS_LEN, GFP_ATOMIC);
+		pmstats = kzalloc(4096, GFP_ATOMIC);
 
 	if (!memcmp(pmstats->magic, PMSTATS_MAGIC, 16)) {
-		pmstats_last = kzalloc(PMSTATS_LEN, GFP_ATOMIC);
+		pmstats_last = kzalloc(4096, GFP_ATOMIC);
 		if (pmstats_last)
-			memcpy(pmstats_last, pmstats, PMSTATS_LEN);
+			memcpy(pmstats_last, pmstats, 4096);
 	}
 
-	memset(pmstats, 0, PMSTATS_LEN);
+	memset(pmstats, 0, 4096);
 	memcpy(pmstats->magic, PMSTATS_MAGIC, 16);
 
 	debugfs_create_file("pmstats", 0444, NULL, pmstats, &pmstats_ops);
@@ -213,15 +221,15 @@ static void s3c_pm_restore_uarts(void) { }
 unsigned long s3c_irqwake_intmask	= 0xffffffffL;
 unsigned long s3c_irqwake_eintmask	= 0xffffffffL;
 
-int s3c_irqext_wake(struct irq_data *data, unsigned int state)
+int s3c_irqext_wake(unsigned int irqno, unsigned int state)
 {
-	unsigned long bit = 1L << IRQ_EINT_BIT(data->irq);
+	unsigned long bit = 1L << IRQ_EINT_BIT(irqno);
 
 	if (!(s3c_irqwake_eintallow & bit))
 		return -ENOENT;
 
 	printk(KERN_INFO "wake %s for irq %d\n",
-	       state ? "enabled" : "disabled", data->irq);
+	       state ? "enabled" : "disabled", irqno);
 
 	if (!state)
 		s3c_irqwake_eintmask |= bit;
@@ -287,9 +295,8 @@ void s3c_pm_do_restore_core(struct sleep_save *ptr, int count)
  *
  * print any IRQs asserted at resume time (ie, we woke from)
 */
-static void __maybe_unused s3c_pm_show_resume_irqs(int start,
-						   unsigned long which,
-						   unsigned long mask)
+static void s3c_pm_show_resume_irqs(int start, unsigned long which,
+				    unsigned long mask)
 {
 	int i;
 
@@ -302,6 +309,42 @@ static void __maybe_unused s3c_pm_show_resume_irqs(int start,
 	}
 }
 
+bool s3c_pm_check_pending_interrupt(void)
+{
+	bool ret=true;
+
+	unsigned int s5pc11x_pm_wakeup_eint1_pend = 0;
+	unsigned int s5pc11x_pm_wakeup_eint2_pend = 0;
+
+
+	s5pc11x_pm_wakeup_eint1_pend =__raw_readl(S5PV210_EINT1PEND);
+	s5pc11x_pm_wakeup_eint2_pend =__raw_readl(S5PV210_EINT2PEND);
+
+	if(s5pc11x_pm_wakeup_eint1_pend) {	
+		if(s5pc11x_pm_wakeup_eint1_pend & EINTPEND1_BIT_ONEDRAM) {
+			printk(KERN_DEBUG "%s: cp interrupt pending.\n", __func__);
+			ret=false;
+		}
+	}
+
+	if(s5pc11x_pm_wakeup_eint2_pend) {
+		if(s5pc11x_pm_wakeup_eint2_pend & EINTPEND2_BIT_MICROUSB) {
+			printk(KERN_DEBUG "%s: micro usb interrupt pending.\n", __func__);
+			ret=false;
+		}
+	}
+
+#if 0 // defined (CONFIG_S5PC110_HAWK_BOARD) 
+	if(s5pc11x_pm_wakeup_eint1_pend) {	
+		if(s5pc11x_pm_wakeup_eint1_pend & EINTPEND1_BIT_ALSINT) {
+			printk(KERN_DEBUG "%s: als_int interrupt pending.\n", __func__);
+			ret=false;
+		}
+	}
+#endif
+
+	return ret;
+}
 
 void (*pm_cpu_prep)(void);
 void (*pm_cpu_sleep)(void);
@@ -316,7 +359,33 @@ void (*pm_cpu_restore)(void);
 
 static int s3c_pm_enter(suspend_state_t state)
 {
+	static unsigned long regs_save[16];
+
 	/* ensure the debug is initialised (if enabled) */
+
+	/* 20110210 - check pending interrupt to wakeup device */
+	if(!s3c_pm_check_pending_interrupt())
+	{
+		printk(KERN_ERR "interrupt pending. wakeup!!(1)\n", __func__);	
+		return -EINVAL;
+	}
+#if ! defined (CONFIG_S5PC110_HAWK_BOARD) 	
+	/* 20110125 - control power of moviNAND at PM and add 400ms delay for stabilization of moviNAND. */
+	gpio_set_value(GPIO_MASSMEMORY_EN, 0);
+#ifdef CONFIG_S5PC110_DEMPSEY_BOARD
+	gpio_set_value(GPIO_MASSMEMORY_EN2, 0);
+#else
+	mdelay(400);
+#endif
+
+
+#endif
+	/* 20110210 - check pending interrupt to wakeup device */
+	if(!s3c_pm_check_pending_interrupt())
+	{
+		printk(KERN_ERR "interrupt pending. wakeup!!(2)\n", __func__);	
+		return -EINVAL;
+	}
 
 	s3c_pm_debug_init();
 
@@ -339,13 +408,19 @@ static int s3c_pm_enter(suspend_state_t state)
 		return -EINVAL;
 	}
 
+	/* store the physical address of the register recovery block */
+
+	s3c_sleep_save_phys = virt_to_phys(regs_save);
+
+	S3C_PMDBG("s3c_sleep_save_phys=0x%08lx\n", s3c_sleep_save_phys);
+
 	/* save all necessary core registers not covered by the drivers */
 
 	s3c_pm_save_gpios();
 	s3c_pm_save_uarts();
 	s3c_pm_save_core();
 
-	s3c_config_sleep_gpio();
+	config_sleep_gpio();
 
 	/* set the irq configuration for wake */
 
@@ -379,7 +454,7 @@ static int s3c_pm_enter(suspend_state_t state)
 
 	pmstats->sleep_count++;
 	pmstats->sleep_freq = __raw_readl(S5P_CLK_DIV0);
-	s3c_cpu_save(0, PLAT_PHYS_OFFSET - PAGE_OFFSET);
+	s3c_cpu_save(regs_save);
 	pmstats->wake_count++;
 	pmstats->wake_freq = __raw_readl(S5P_CLK_DIV0);
 
@@ -419,6 +494,12 @@ static int s3c_pm_enter(suspend_state_t state)
 	return 0;
 }
 
+/* callback from assembly code */
+void s3c_pm_cb_flushcache(void)
+{
+	flush_cache_all();
+}
+
 static int s3c_pm_prepare(void)
 {
 	/* prepare check area if configured */
@@ -432,7 +513,7 @@ static void s3c_pm_finish(void)
 	s3c_pm_check_cleanup();
 }
 
-static const struct platform_suspend_ops s3c_pm_ops = {
+static struct platform_suspend_ops s3c_pm_ops = {
 	.enter		= s3c_pm_enter,
 	.prepare	= s3c_pm_prepare,
 	.finish		= s3c_pm_finish,

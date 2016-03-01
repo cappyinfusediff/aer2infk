@@ -26,9 +26,6 @@
  *	YOSHIFUJI,H. @USAGI	Always remove fragment header to
  *				calculate ICV correctly.
  */
-
-#define pr_fmt(fmt) "IPv6: " fmt
-
 #include <linux/errno.h>
 #include <linux/types.h>
 #include <linux/string.h>
@@ -148,6 +145,16 @@ int ip6_frag_match(struct inet_frag_queue *q, void *a)
 }
 EXPORT_SYMBOL(ip6_frag_match);
 
+/* Memory Tracking Functions. */
+static inline void frag_kfree_skb(struct netns_frags *nf,
+		struct sk_buff *skb, int *work)
+{
+	if (work)
+		*work -= skb->truesize;
+	atomic_sub(skb->truesize, &nf->mem);
+	kfree_skb(skb);
+}
+
 void ip6_frag_init(struct inet_frag_queue *q, void *a)
 {
 	struct frag_queue *fq = container_of(q, struct frag_queue, q);
@@ -227,7 +234,7 @@ out:
 }
 
 static __inline__ struct frag_queue *
-fq_find(struct net *net, __be32 id, const struct in6_addr *src, const struct in6_addr *dst)
+fq_find(struct net *net, __be32 id, struct in6_addr *src, struct in6_addr *dst)
 {
 	struct inet_frag_queue *q;
 	struct ip6_create_arg arg;
@@ -242,10 +249,9 @@ fq_find(struct net *net, __be32 id, const struct in6_addr *src, const struct in6
 	hash = inet6_hash_frag(id, src, dst, ip6_frags.rnd);
 
 	q = inet_frag_find(&net->ipv6.frags, &ip6_frags, &arg, hash);
-	if (IS_ERR_OR_NULL(q)) {
-		inet_frag_maybe_warn_overflow(q, pr_fmt());
+	if (q == NULL)
 		return NULL;
-	}
+
 	return container_of(q, struct frag_queue, q);
 }
 
@@ -326,11 +332,6 @@ static int ip6_frag_queue(struct frag_queue *fq, struct sk_buff *skb,
 	 * in the chain of fragments so far.  We must know where to put
 	 * this fragment, right?
 	 */
-	prev = fq->q.fragments_tail;
-	if (!prev || FRAG6_CB(prev)->offset < offset) {
-		next = NULL;
-		goto found;
-	}
 	prev = NULL;
 	for(next = fq->q.fragments; next != NULL; next = next->next) {
 		if (FRAG6_CB(next)->offset >= offset)
@@ -338,30 +339,63 @@ static int ip6_frag_queue(struct frag_queue *fq, struct sk_buff *skb,
 		prev = next;
 	}
 
-found:
-	/* RFC5722, Section 4:
-	 *                                  When reassembling an IPv6 datagram, if
-	 *   one or more its constituent fragments is determined to be an
-	 *   overlapping fragment, the entire datagram (and any constituent
-	 *   fragments, including those not yet received) MUST be silently
-	 *   discarded.
+	/* We found where to put this one.  Check for overlap with
+	 * preceding fragment, and, if needed, align things so that
+	 * any overlaps are eliminated.
 	 */
+	if (prev) {
+		int i = (FRAG6_CB(prev)->offset + prev->len) - offset;
 
-	/* Check for overlap with preceding fragment. */
-	if (prev &&
-	    (FRAG6_CB(prev)->offset + prev->len) > offset)
-		goto discard_fq;
+		if (i > 0) {
+			offset += i;
+			if (end <= offset)
+				goto err;
+			if (!pskb_pull(skb, i))
+				goto err;
+			if (skb->ip_summed != CHECKSUM_UNNECESSARY)
+				skb->ip_summed = CHECKSUM_NONE;
+		}
+	}
 
-	/* Look for overlap with succeeding segment. */
-	if (next && FRAG6_CB(next)->offset < end)
-		goto discard_fq;
+	/* Look for overlap with succeeding segments.
+	 * If we can merge fragments, do it.
+	 */
+	while (next && FRAG6_CB(next)->offset < end) {
+		int i = end - FRAG6_CB(next)->offset; /* overlap is 'i' bytes */
+
+		if (i < next->len) {
+			/* Eat head of the next overlapped fragment
+			 * and leave the loop. The next ones cannot overlap.
+			 */
+			if (!pskb_pull(next, i))
+				goto err;
+			FRAG6_CB(next)->offset += i;	/* next fragment */
+			fq->q.meat -= i;
+			if (next->ip_summed != CHECKSUM_UNNECESSARY)
+				next->ip_summed = CHECKSUM_NONE;
+			break;
+		} else {
+			struct sk_buff *free_it = next;
+
+			/* Old fragment is completely overridden with
+			 * new one drop it.
+			 */
+			next = next->next;
+
+			if (prev)
+				prev->next = next;
+			else
+				fq->q.fragments = next;
+
+			fq->q.meat -= free_it->len;
+			frag_kfree_skb(fq->q.net, free_it, NULL);
+		}
+	}
 
 	FRAG6_CB(skb)->offset = offset;
 
 	/* Insert this fragment in the chain of fragments. */
 	skb->next = next;
-	if (!next)
-		fq->q.fragments_tail = skb;
 	if (prev)
 		prev->next = skb;
 	else
@@ -385,25 +419,14 @@ found:
 	}
 
 	if (fq->q.last_in == (INET_FRAG_FIRST_IN | INET_FRAG_LAST_IN) &&
-	    fq->q.meat == fq->q.len) {
-		int res;
-		unsigned long orefdst = skb->_skb_refdst;
-
-		skb->_skb_refdst = 0UL;
-		res = ip6_frag_reasm(fq, prev, dev);
-		skb->_skb_refdst = orefdst;
-		return res;
-	}
-
-	skb_dst_drop(skb);
+	    fq->q.meat == fq->q.len)
+		return ip6_frag_reasm(fq, prev, dev);
 
 	write_lock(&ip6_frags.lock);
 	list_move_tail(&fq->q.lru_list, &fq->q.net->lru_list);
 	write_unlock(&ip6_frags.lock);
 	return -1;
 
-discard_fq:
-	fq_kill(fq);
 err:
 	IP6_INC_STATS(net, ip6_dst_idev(skb_dst(skb)),
 		      IPSTATS_MIB_REASMFAILS);
@@ -439,8 +462,6 @@ static int ip6_frag_reasm(struct frag_queue *fq, struct sk_buff *prev,
 			goto out_oom;
 
 		fp->next = head->next;
-		if (!fp->next)
-			fq->q.fragments_tail = fp;
 		prev->next = fp;
 
 		skb_morph(head, fq->q.fragments);
@@ -467,7 +488,7 @@ static int ip6_frag_reasm(struct frag_queue *fq, struct sk_buff *prev,
 	/* If the first fragment is fragmented itself, we split
 	 * it to two chunks: the first with data and paged part
 	 * and the second, holding only fragments. */
-	if (skb_has_frag_list(head)) {
+	if (skb_has_frags(head)) {
 		struct sk_buff *clone;
 		int i, plen = 0;
 
@@ -499,6 +520,7 @@ static int ip6_frag_reasm(struct frag_queue *fq, struct sk_buff *prev,
 	skb_shinfo(head)->frag_list = head->next;
 	skb_reset_transport_header(head);
 	skb_push(head, head->data - skb_network_header(head));
+	atomic_sub(head->truesize, &fq->q.net->mem);
 
 	for (fp=head->next; fp; fp = fp->next) {
 		head->data_len += fp->len;
@@ -508,15 +530,14 @@ static int ip6_frag_reasm(struct frag_queue *fq, struct sk_buff *prev,
 		else if (head->ip_summed == CHECKSUM_COMPLETE)
 			head->csum = csum_add(head->csum, fp->csum);
 		head->truesize += fp->truesize;
+		atomic_sub(fp->truesize, &fq->q.net->mem);
 	}
-	atomic_sub(head->truesize, &fq->q.net->mem);
 
 	head->next = NULL;
 	head->dev = dev;
 	head->tstamp = fq->q.stamp;
 	ipv6_hdr(head)->payload_len = htons(payload_len);
 	IP6CB(head)->nhoff = nhoff;
-	IP6CB(head)->flags |= IP6SKB_FRAGMENTED;
 
 	/* Yes, and fold redundant checksum back. 8) */
 	if (head->ip_summed == CHECKSUM_COMPLETE)
@@ -528,7 +549,6 @@ static int ip6_frag_reasm(struct frag_queue *fq, struct sk_buff *prev,
 	IP6_INC_STATS_BH(net, __in6_dev_get(dev), IPSTATS_MIB_REASMOKS);
 	rcu_read_unlock();
 	fq->q.fragments = NULL;
-	fq->q.fragments_tail = NULL;
 	return 1;
 
 out_oversize:
@@ -549,11 +569,8 @@ static int ipv6_frag_rcv(struct sk_buff *skb)
 {
 	struct frag_hdr *fhdr;
 	struct frag_queue *fq;
-	const struct ipv6hdr *hdr = ipv6_hdr(skb);
+	struct ipv6hdr *hdr = ipv6_hdr(skb);
 	struct net *net = dev_net(skb_dst(skb)->dev);
-
-	if (IP6CB(skb)->flags & IP6SKB_FRAGMENTED)
-		goto fail_hdr;
 
 	IP6_INC_STATS_BH(net, ip6_dst_idev(skb_dst(skb)), IPSTATS_MIB_REASMREQDS);
 
@@ -575,7 +592,6 @@ static int ipv6_frag_rcv(struct sk_buff *skb)
 				 ip6_dst_idev(skb_dst(skb)), IPSTATS_MIB_REASMOKS);
 
 		IP6CB(skb)->nhoff = (u8 *)fhdr - skb_network_header(skb);
-		IP6CB(skb)->flags |= IP6SKB_FRAGMENTED;
 		return 1;
 	}
 

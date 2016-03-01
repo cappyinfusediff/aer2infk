@@ -427,24 +427,15 @@ static void ide_disk_unlock_native_capacity(ide_drive_t *drive)
 		drive->dev_flags |= IDE_DFLAG_NOHPA; /* disable HPA on resume */
 }
 
-static int idedisk_prep_fn(struct request_queue *q, struct request *rq)
+static void idedisk_prepare_flush(struct request_queue *q, struct request *rq)
 {
 	ide_drive_t *drive = q->queuedata;
-	struct ide_cmd *cmd;
-
-	if (!(rq->cmd_flags & REQ_FLUSH))
-		return BLKPREP_OK;
-
-	if (rq->special) {
-		cmd = rq->special;
-		memset(cmd, 0, sizeof(*cmd));
-	} else {
-		cmd = kzalloc(sizeof(*cmd), GFP_ATOMIC);
-	}
+	struct ide_cmd *cmd = kmalloc(sizeof(*cmd), GFP_ATOMIC);
 
 	/* FIXME: map struct ide_taskfile on rq->cmd[] */
 	BUG_ON(cmd == NULL);
 
+	memset(cmd, 0, sizeof(*cmd));
 	if (ata_id_flush_ext_enabled(drive->id) &&
 	    (drive->capacity64 >= (1UL << 28)))
 		cmd->tf.command = ATA_CMD_FLUSH_EXT;
@@ -457,8 +448,6 @@ static int idedisk_prep_fn(struct request_queue *q, struct request *rq)
 	rq->cmd_type = REQ_TYPE_ATA_TASKFILE;
 	rq->special = cmd;
 	cmd->rq = rq;
-
-	return BLKPREP_OK;
 }
 
 ide_devset_get(multcount, mult_count);

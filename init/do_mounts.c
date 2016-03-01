@@ -58,7 +58,6 @@ static int __init readwrite(char *str)
 __setup("ro", readonly);
 __setup("rw", readwrite);
 
-#ifdef CONFIG_BLOCK
 /**
  * match_dev_by_uuid - callback for finding a partition using its uuid
  * @dev:	device passed in by the caller
@@ -66,7 +65,7 @@ __setup("rw", readwrite);
  *
  * Returns 1 if the device matches, and 0 otherwise.
  */
-static int match_dev_by_uuid(struct device *dev, void *data)
+static int __init match_dev_by_uuid(struct device *dev, void *data)
 {
 	u8 *uuid = data;
 	struct hd_struct *part = dev_to_part(dev);
@@ -93,7 +92,7 @@ no_match:
  *
  * Returns the matching dev_t on success or 0 on failure.
  */
-static dev_t devt_from_partuuid(char *uuid_str)
+static dev_t __init devt_from_partuuid(char *uuid_str)
 {
 	dev_t res = 0;
 	struct device *dev = NULL;
@@ -112,7 +111,6 @@ static dev_t devt_from_partuuid(char *uuid_str)
 done:
 	return res;
 }
-#endif
 
 /*
  *	Convert a name into device number.  We accept the following variants:
@@ -140,7 +138,6 @@ dev_t name_to_dev_t(char *name)
 	dev_t res = 0;
 	int part;
 
-#ifdef CONFIG_BLOCK
 	if (strncmp(name, "PARTUUID=", 9) == 0) {
 		name += 9;
 		if (strlen(name) != 36)
@@ -150,7 +147,6 @@ dev_t name_to_dev_t(char *name)
 			goto fail;
 		goto done;
 	}
-#endif
 
 	if (strncmp(name, "/dev/", 5) != 0) {
 		unsigned maj, min;
@@ -186,7 +182,7 @@ dev_t name_to_dev_t(char *name)
 		goto done;
 
 	/*
-	 * try non-existent, but valid partition, which may only exist
+	 * try non-existant, but valid partition, which may only exist
 	 * after revalidating the disk, like partitioned md devices
 	 */
 	while (p > s && isdigit(p[-1]))
@@ -291,10 +287,9 @@ static int __init do_mount_root(char *name, char *fs, int flags, void *data)
 	if (err)
 		return err;
 
-	sys_chdir((const char __user __force *)"/root");
+	sys_chdir("/root");
 	ROOT_DEV = current->fs->pwd.mnt->mnt_sb->s_dev;
-	printk(KERN_INFO
-	       "VFS: Mounted root (%s filesystem)%s on device %u:%u.\n",
+	printk("VFS: Mounted root (%s filesystem)%s on device %u:%u.\n",
 	       current->fs->pwd.mnt->mnt_sb->s_type->name,
 	       current->fs->pwd.mnt->mnt_sb->s_flags & MS_RDONLY ?
 	       " readonly" : "", MAJOR(ROOT_DEV), MINOR(ROOT_DEV));
@@ -360,41 +355,14 @@ out:
 }
  
 #ifdef CONFIG_ROOT_NFS
-
-#define NFSROOT_TIMEOUT_MIN	5
-#define NFSROOT_TIMEOUT_MAX	30
-#define NFSROOT_RETRY_MAX	5
-
 static int __init mount_nfs_root(void)
 {
-	char *root_dev, *root_data;
-	unsigned int timeout;
-	int try, err;
+	void *data = nfs_root_data();
 
-	err = nfs_root_data(&root_dev, &root_data);
-	if (err != 0)
-		return 0;
-
-	/*
-	 * The server or network may not be ready, so try several
-	 * times.  Stop after a few tries in case the client wants
-	 * to fall back to other boot methods.
-	 */
-	timeout = NFSROOT_TIMEOUT_MIN;
-	for (try = 1; ; try++) {
-		err = do_mount_root(root_dev, "nfs",
-					root_mountflags, root_data);
-		if (err == 0)
-			return 1;
-		if (try > NFSROOT_RETRY_MAX)
-			break;
-
-		/* Wait, in case the server refused us immediately */
-		ssleep(timeout);
-		timeout <<= 1;
-		if (timeout > NFSROOT_TIMEOUT_MAX)
-			timeout = NFSROOT_TIMEOUT_MAX;
-	}
+	create_dev("/dev/root", ROOT_DEV);
+	if (data &&
+	    do_mount_root("/dev/root", "nfs", root_mountflags, data) == 0)
+		return 1;
 	return 0;
 }
 #endif
@@ -432,7 +400,7 @@ void __init change_floppy(char *fmt, ...)
 void __init mount_root(void)
 {
 #ifdef CONFIG_ROOT_NFS
-	if (ROOT_DEV == Root_NFS) {
+	if (MAJOR(ROOT_DEV) == UNNAMED_MAJOR) {
 		if (mount_nfs_root())
 			return;
 
@@ -516,5 +484,5 @@ void __init prepare_namespace(void)
 out:
 	devtmpfs_mount("dev");
 	sys_mount(".", "/", NULL, MS_MOVE, NULL);
-	sys_chroot((const char __user __force *)".");
+	sys_chroot(".");
 }

@@ -27,7 +27,7 @@
  *	  in the structure.
  *
  *   * for structures within structures, the format of the internal
- *	structure is laid out. This allows the internal structure
+ *	structure is layed out. This allows the internal structure
  *	to be deciphered for the format file. Although these macros
  *	may become out of sync with the internal structure, they
  *	will create a compile error if it happens. Since the
@@ -53,7 +53,7 @@
  */
 
 /*
- * Function trace entry - function address and parent function address:
+ * Function trace entry - function address and parent function addres:
  */
 FTRACE_ENTRY(function, ftrace_entry,
 
@@ -109,12 +109,12 @@ FTRACE_ENTRY(funcgraph_exit, ftrace_graph_ret_entry,
  */
 #define FTRACE_CTX_FIELDS					\
 	__field(	unsigned int,	prev_pid	)	\
-	__field(	unsigned int,	next_pid	)	\
-	__field(	unsigned int,	next_cpu	)       \
 	__field(	unsigned char,	prev_prio	)	\
 	__field(	unsigned char,	prev_state	)	\
+	__field(	unsigned int,	next_pid	)	\
 	__field(	unsigned char,	next_prio	)	\
-	__field(	unsigned char,	next_state	)
+	__field(	unsigned char,	next_state	)	\
+	__field(	unsigned int,	next_cpu	)
 
 FTRACE_ENTRY(context_switch, ctx_switch_entry,
 
@@ -151,16 +151,27 @@ FTRACE_ENTRY_DUP(wakeup, ctx_switch_entry,
 );
 
 /*
+ * Special (free-form) trace entry:
+ */
+FTRACE_ENTRY(special, special_entry,
+
+	TRACE_SPECIAL,
+
+	F_STRUCT(
+		__field(	unsigned long,	arg1	)
+		__field(	unsigned long,	arg2	)
+		__field(	unsigned long,	arg3	)
+	),
+
+	F_printk("(%08lx) (%08lx) (%08lx)",
+		 __entry->arg1, __entry->arg2, __entry->arg3)
+);
+
+/*
  * Stack-trace entry:
  */
 
 #define FTRACE_STACK_ENTRIES	8
-
-#ifndef CONFIG_64BIT
-# define IP_FMT "%08lx"
-#else
-# define IP_FMT "%016lx"
-#endif
 
 FTRACE_ENTRY(kernel_stack, stack_entry,
 
@@ -170,9 +181,8 @@ FTRACE_ENTRY(kernel_stack, stack_entry,
 		__array(	unsigned long,	caller, FTRACE_STACK_ENTRIES	)
 	),
 
-	F_printk("\t=> (" IP_FMT ")\n\t=> (" IP_FMT ")\n\t=> (" IP_FMT ")\n"
-		 "\t=> (" IP_FMT ")\n\t=> (" IP_FMT ")\n\t=> (" IP_FMT ")\n"
-		 "\t=> (" IP_FMT ")\n\t=> (" IP_FMT ")\n",
+	F_printk("\t=> (%08lx)\n\t=> (%08lx)\n\t=> (%08lx)\n\t=> (%08lx)\n"
+		 "\t=> (%08lx)\n\t=> (%08lx)\n\t=> (%08lx)\n\t=> (%08lx)\n",
 		 __entry->caller[0], __entry->caller[1], __entry->caller[2],
 		 __entry->caller[3], __entry->caller[4], __entry->caller[5],
 		 __entry->caller[6], __entry->caller[7])
@@ -187,9 +197,8 @@ FTRACE_ENTRY(user_stack, userstack_entry,
 		__array(	unsigned long,	caller, FTRACE_STACK_ENTRIES	)
 	),
 
-	F_printk("\t=> (" IP_FMT ")\n\t=> (" IP_FMT ")\n\t=> (" IP_FMT ")\n"
-		 "\t=> (" IP_FMT ")\n\t=> (" IP_FMT ")\n\t=> (" IP_FMT ")\n"
-		 "\t=> (" IP_FMT ")\n\t=> (" IP_FMT ")\n",
+	F_printk("\t=> (%08lx)\n\t=> (%08lx)\n\t=> (%08lx)\n\t=> (%08lx)\n"
+		 "\t=> (%08lx)\n\t=> (%08lx)\n\t=> (%08lx)\n\t=> (%08lx)\n",
 		 __entry->caller[0], __entry->caller[1], __entry->caller[2],
 		 __entry->caller[3], __entry->caller[4], __entry->caller[5],
 		 __entry->caller[6], __entry->caller[7])
@@ -282,3 +291,18 @@ FTRACE_ENTRY(branch, trace_branch,
 		 __entry->func, __entry->file, __entry->correct)
 );
 
+FTRACE_ENTRY(ksym_trace, ksym_trace_entry,
+
+	TRACE_KSYM,
+
+	F_STRUCT(
+		__field(	unsigned long,	ip			  )
+		__field(	unsigned char,	type			  )
+		__array(	char	     ,	cmd,	   TASK_COMM_LEN  )
+		__field(	unsigned long,  addr			  )
+	),
+
+	F_printk("ip: %pF type: %d ksym_name: %pS cmd: %s",
+		(void *)__entry->ip, (unsigned int)__entry->type,
+		(void *)__entry->addr,  __entry->cmd)
+);

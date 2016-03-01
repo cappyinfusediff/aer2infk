@@ -470,13 +470,6 @@ static ssize_t store_scaling_governor(struct cpufreq_policy *policy,
 }
 
 /**
- * undervolting/overclocking
- * sysfs interface
- */
-extern ssize_t show_UV_mV_table(struct cpufreq_policy *policy, char *buf);
-extern ssize_t store_UV_mV_table(struct cpufreq_policy *policy, const char *buf, size_t count);
-
-/**
  * show_scaling_driver - show the cpufreq driver currently loaded
  */
 static ssize_t show_scaling_driver(struct cpufreq_policy *policy, char *buf)
@@ -569,6 +562,13 @@ static ssize_t show_scaling_setspeed(struct cpufreq_policy *policy, char *buf)
 
 	return policy->governor->show_setspeed(policy, buf);
 }
+
+/**
+ * undervolting/overclocking
+ * sysfs interface
+ */
+extern ssize_t show_UV_mV_table(struct cpufreq_policy *policy, char *buf);
+extern ssize_t store_UV_mV_table(struct cpufreq_policy *policy, const char *buf, size_t count);
 
 /**
  * show_scaling_driver - show the current cpufreq HW/BIOS limitation
@@ -1270,6 +1270,7 @@ out:
 }
 EXPORT_SYMBOL(cpufreq_get);
 
+
 static struct sysdev_driver cpufreq_sysdev_driver = {
 	.add		= cpufreq_add_dev,
 	.remove		= cpufreq_remove_dev,
@@ -1856,14 +1857,15 @@ int cpufreq_register_driver(struct cpufreq_driver *driver_data)
 	register_hotcpu_notifier(&cpufreq_cpu_notifier);
 	pr_debug("driver %s up and running\n", driver_data->name);
 
-	return 0;
+  	return 0;
 err_sysdev_unreg:
-	sysdev_driver_unregister(&cpu_sysdev_class,
-			&cpufreq_sysdev_driver);
+  	sysdev_driver_unregister(&cpu_sysdev_class,
+      		&cpufreq_sysdev_driver);
 err_null_driver:
 	spin_lock_irqsave(&cpufreq_driver_lock, flags);
 	cpufreq_driver = NULL;
 	spin_unlock_irqrestore(&cpufreq_driver_lock, flags);
+
 	return ret;
 }
 EXPORT_SYMBOL_GPL(cpufreq_register_driver);

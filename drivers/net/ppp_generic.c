@@ -1137,7 +1137,7 @@ ppp_send_frame(struct ppp *ppp, struct sk_buff *skb)
 		/* the filter instructions are constructed assuming
 		   a four-byte PPP header on each packet */
 		*skb_push(skb, 2) = 1;
-		if (ppp->pass_filter &&
+		if (ppp->pass_filter && 
 		    sk_run_filter(skb, ppp->pass_filter) == 0) {
 			if (ppp->debug & 1)
 				netdev_printk(KERN_DEBUG, ppp->dev,

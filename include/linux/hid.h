@@ -311,12 +311,10 @@ struct hid_item {
 #define HID_QUIRK_HIDDEV_FORCE			0x00000010
 #define HID_QUIRK_BADPAD			0x00000020
 #define HID_QUIRK_MULTI_INPUT			0x00000040
-#define HID_QUIRK_HIDINPUT_FORCE		0x00000080
 #define HID_QUIRK_SKIP_OUTPUT_REPORTS		0x00010000
 #define HID_QUIRK_FULLSPEED_INTERVAL		0x10000000
 #define HID_QUIRK_NO_INIT_REPORTS		0x20000000
 #define HID_QUIRK_NO_IGNORE			0x40000000
-#define HID_QUIRK_NO_INPUT_SYNC			0x80000000
 
 /*
  * This is the global environment of the parser. This information is
@@ -402,7 +400,7 @@ struct hid_field {
 	__u16 dpad;			/* dpad input code */
 };
 
-#define HID_MAX_FIELDS 128
+#define HID_MAX_FIELDS 64
 
 struct hid_report {
 	struct list_head list;
@@ -414,12 +412,10 @@ struct hid_report {
 	struct hid_device *device;			/* associated device */
 };
 
-#define HID_MAX_IDS 256
-
 struct hid_report_enum {
 	unsigned numbered;
 	struct list_head report_list;
-	struct hid_report *report_id_hash[HID_MAX_IDS];
+	struct hid_report *report_id_hash[256];
 };
 
 #define HID_REPORT_TYPES 3
@@ -598,9 +594,6 @@ struct hid_usage_id {
  * @report_fixup: called before report descriptor parsing (NULL means nop)
  * @input_mapping: invoked on input registering before mapping an usage
  * @input_mapped: invoked on input registering after mapping an usage
- * @feature_mapping: invoked on feature registering
- * @input_register: called just before input device is registered after reports
- * 		    are parsed.
  * @suspend: invoked on suspend (NULL means nop)
  * @resume: invoked on resume if device was not reset (NULL means nop)
  * @reset_resume: invoked on resume if device was reset (NULL means nop)
@@ -635,8 +628,8 @@ struct hid_driver {
 	int (*event)(struct hid_device *hdev, struct hid_field *field,
 			struct hid_usage *usage, __s32 value);
 
-	__u8 *(*report_fixup)(struct hid_device *hdev, __u8 *buf,
-			unsigned int *size);
+	void (*report_fixup)(struct hid_device *hdev, __u8 *buf,
+			unsigned int size);
 
 	int (*input_mapping)(struct hid_device *hdev,
 			struct hid_input *hidinput, struct hid_field *field,
@@ -644,11 +637,6 @@ struct hid_driver {
 	int (*input_mapped)(struct hid_device *hdev,
 			struct hid_input *hidinput, struct hid_field *field,
 			struct hid_usage *usage, unsigned long **bit, int *max);
-	void (*feature_mapping)(struct hid_device *hdev,
-			struct hid_field *field,
-			struct hid_usage *usage);
-	int (*input_register)(struct hid_device *hdev, struct hid_input
-			*hidinput);
 #ifdef CONFIG_PM
 	int (*suspend)(struct hid_device *hdev, pm_message_t message);
 	int (*resume)(struct hid_device *hdev);
@@ -717,10 +705,6 @@ void hid_output_report(struct hid_report *report, __u8 *data);
 struct hid_device *hid_allocate_device(void);
 struct hid_report *hid_register_report(struct hid_device *device, unsigned type, unsigned id);
 int hid_parse_report(struct hid_device *hid, __u8 *start, unsigned size);
-struct hid_report *hid_validate_values(struct hid_device *hid,
-				       unsigned int type, unsigned int id,
-				       unsigned int field_index,
-				       unsigned int report_counts);
 int hid_check_keys_pressed(struct hid_device *hid);
 int hid_connect(struct hid_device *hid, unsigned int connect_mask);
 void hid_disconnect(struct hid_device *hid);
@@ -809,7 +793,7 @@ static inline int __must_check hid_parse(struct hid_device *hdev)
  *
  * Call this in probe function *after* hid_parse. This will setup HW buffers
  * and start the device (if not deffered to device open). hid_hw_stop must be
- * called if this was successful.
+ * called if this was successfull.
  */
 static inline int __must_check hid_hw_start(struct hid_device *hdev,
 		unsigned int connect_mask)
@@ -837,49 +821,6 @@ static inline void hid_hw_stop(struct hid_device *hdev)
 	hdev->ll_driver->stop(hdev);
 }
 
-/**
- * hid_hw_open - signal underlaying HW to start delivering events
- *
- * @hdev: hid device
- *
- * Tell underlying HW to start delivering events from the device.
- * This function should be called sometime after successful call
- * to hid_hiw_start().
- */
-static inline int __must_check hid_hw_open(struct hid_device *hdev)
-{
-	return hdev->ll_driver->open(hdev);
-}
-
-/**
- * hid_hw_close - signal underlaying HW to stop delivering events
- *
- * @hdev: hid device
- *
- * This function indicates that we are not interested in the events
- * from this device anymore. Delivery of events may or may not stop,
- * depending on the number of users still outstanding.
- */
-static inline void hid_hw_close(struct hid_device *hdev)
-{
-	hdev->ll_driver->close(hdev);
-}
-
-/**
- * hid_hw_power - requests underlying HW to go into given power mode
- *
- * @hdev: hid device
- * @level: requested power level (one of %PM_HINT_* defines)
- *
- * This function requests underlying hardware to enter requested power
- * mode.
- */
-
-static inline int hid_hw_power(struct hid_device *hdev, int level)
-{
-	return hdev->ll_driver->power ? hdev->ll_driver->power(hdev, level) : 0;
-}
-
 void hid_report_raw_event(struct hid_device *hid, int type, u8 *data, int size,
 		int interrupt);
 
@@ -898,32 +839,17 @@ int hid_pidff_init(struct hid_device *hid);
 #define hid_pidff_init NULL
 #endif
 
-#define dbg_hid(format, arg...)						\
-do {									\
-	if (hid_debug)							\
-		printk(KERN_DEBUG "%s: " format, __FILE__, ##arg);	\
-} while (0)
-
-#define hid_printk(level, hid, fmt, arg...)		\
-	dev_printk(level, &(hid)->dev, fmt, ##arg)
-#define hid_emerg(hid, fmt, arg...)			\
-	dev_emerg(&(hid)->dev, fmt, ##arg)
-#define hid_crit(hid, fmt, arg...)			\
-	dev_crit(&(hid)->dev, fmt, ##arg)
-#define hid_alert(hid, fmt, arg...)			\
-	dev_alert(&(hid)->dev, fmt, ##arg)
 #define hid_err(hid, fmt, arg...)			\
 	dev_err(&(hid)->dev, fmt, ##arg)
-#define hid_notice(hid, fmt, arg...)			\
-	dev_notice(&(hid)->dev, fmt, ##arg)
 #define hid_warn(hid, fmt, arg...)			\
 	dev_warn(&(hid)->dev, fmt, ##arg)
-#define hid_info(hid, fmt, arg...)			\
-	dev_info(&(hid)->dev, fmt, ##arg)
-#define hid_dbg(hid, fmt, arg...)			\
-	dev_dbg(&(hid)->dev, fmt, ##arg)
 
-#endif /* __KERNEL__ */
+#define dbg_hid(format, arg...) if (hid_debug) \
+				printk(KERN_DEBUG "%s: " format ,\
+				__FILE__ , ## arg)
+#define err_hid(format, arg...) printk(KERN_ERR "%s: " format "\n" , \
+		__FILE__ , ## arg)
+#endif /* HID_FF */
 
 #endif
 

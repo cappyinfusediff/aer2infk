@@ -2487,7 +2487,7 @@ sisusb_release(struct inode *inode, struct file *file)
 {
 	struct sisusb_usb_data *sisusb;
 
-	if (!(sisusb = file->private_data))
+	if (!(sisusb = (struct sisusb_usb_data *)file->private_data))
 		return -ENODEV;
 
 	mutex_lock(&sisusb->lock);
@@ -2519,7 +2519,7 @@ sisusb_read(struct file *file, char __user *buffer, size_t count, loff_t *ppos)
 	u16 buf16;
 	u32 buf32, address;
 
-	if (!(sisusb = file->private_data))
+	if (!(sisusb = (struct sisusb_usb_data *)file->private_data))
 		return -ENODEV;
 
 	mutex_lock(&sisusb->lock);
@@ -2661,7 +2661,7 @@ sisusb_write(struct file *file, const char __user *buffer, size_t count,
 	u16 buf16;
 	u32 buf32, address;
 
-	if (!(sisusb = file->private_data))
+	if (!(sisusb = (struct sisusb_usb_data *)file->private_data))
 		return -ENODEV;
 
 	mutex_lock(&sisusb->lock);
@@ -2804,7 +2804,7 @@ sisusb_lseek(struct file *file, loff_t offset, int orig)
 	struct sisusb_usb_data *sisusb;
 	loff_t ret;
 
-	if (!(sisusb = file->private_data))
+	if (!(sisusb = (struct sisusb_usb_data *)file->private_data))
 		return -ENODEV;
 
 	mutex_lock(&sisusb->lock);
@@ -2969,7 +2969,7 @@ sisusb_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	long retval = 0;
 	u32 __user *argp = (u32 __user *)arg;
 
-	if (!(sisusb = file->private_data))
+	if (!(sisusb = (struct sisusb_usb_data *)file->private_data))
 		return -ENODEV;
 
 	mutex_lock(&sisusb->lock);
@@ -3247,7 +3247,6 @@ static const struct usb_device_id sisusb_table[] = {
 	{ USB_DEVICE(0x0711, 0x0903) },
 	{ USB_DEVICE(0x0711, 0x0918) },
 	{ USB_DEVICE(0x0711, 0x0920) },
-	{ USB_DEVICE(0x0711, 0x0950) },
 	{ USB_DEVICE(0x182d, 0x021c) },
 	{ USB_DEVICE(0x182d, 0x0269) },
 	{ }

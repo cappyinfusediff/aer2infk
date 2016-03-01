@@ -17,6 +17,7 @@
 #include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/device.h>
+#include <linux/usb/android_composite.h>
 
 #include "u_serial.h"
 #include "gadget_chips.h"
@@ -295,7 +296,9 @@ static void acm_complete_set_line_coding(struct usb_ep *ep,
 	if (req->actual != sizeof(acm->port_line_coding)) {
 		DBG(cdev, "acm ttyGS%d short resp, len %d\n",
 				acm->port_num, req->actual);
-		usb_ep_set_halt(ep);
+
+		if(!!strcmp(ep->name, "ep14-bulk"))	
+				usb_ep_set_halt(ep);
 	} else {
 		struct usb_cdc_line_coding	*value = req->buf;
 
@@ -697,7 +700,6 @@ acm_unbind(struct usb_configuration *c, struct usb_function *f)
 		usb_free_descriptors(f->hs_descriptors);
 	usb_free_descriptors(f->descriptors);
 	gs_free_req(acm->notify, acm->notify_req);
-	kfree(acm->port.func.name);
 	kfree(acm);
 }
 
@@ -769,11 +771,7 @@ int acm_bind_config(struct usb_configuration *c, u8 port_num)
 	acm->port.disconnect = acm_disconnect;
 	acm->port.send_break = acm_send_break;
 
-	acm->port.func.name = kasprintf(GFP_KERNEL, "acm%u", port_num);
-	if (!acm->port.func.name) {
-		kfree(acm);
-		return -ENOMEM;
-	}
+	acm->port.func.name = "acm";
 	acm->port.func.strings = acm_strings;
 	/* descriptors are per-instance copies */
 	acm->port.func.bind = acm_bind;
@@ -787,3 +785,28 @@ int acm_bind_config(struct usb_configuration *c, u8 port_num)
 		kfree(acm);
 	return status;
 }
+
+#ifdef CONFIG_USB_ANDROID_ACM
+
+int acm_function_bind_config(struct usb_configuration *c)
+{
+	int ret = acm_bind_config(c, 0);
+	if (ret == 0)
+		gserial_setup(c->cdev->gadget, 1);
+	return ret;
+}
+
+static struct android_usb_function acm_function = {
+	.name = "acm",
+	.bind_config = acm_function_bind_config,
+};
+
+static int __init init(void)
+{
+	printk(KERN_INFO "f_acm init\n");
+	android_register_function(&acm_function);
+	return 0;
+}
+module_init(init);
+
+#endif /* CONFIG_USB_ANDROID_ACM */

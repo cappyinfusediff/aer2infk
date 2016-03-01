@@ -445,11 +445,11 @@ static void digi_rx_unthrottle(struct tty_struct *tty);
 static void digi_set_termios(struct tty_struct *tty,
 		struct usb_serial_port *port, struct ktermios *old_termios);
 static void digi_break_ctl(struct tty_struct *tty, int break_state);
-static int digi_tiocmget(struct tty_struct *tty);
-static int digi_tiocmset(struct tty_struct *tty, unsigned int set,
-		unsigned int clear);
+static int digi_tiocmget(struct tty_struct *tty, struct file *file);
+static int digi_tiocmset(struct tty_struct *tty, struct file *file,
+	unsigned int set, unsigned int clear);
 static int digi_write(struct tty_struct *tty, struct usb_serial_port *port,
-		const unsigned char *buf, int count);
+	const unsigned char *buf, int count);
 static void digi_write_bulk_callback(struct urb *urb);
 static int digi_write_room(struct tty_struct *tty);
 static int digi_chars_in_buffer(struct tty_struct *tty);
@@ -607,10 +607,8 @@ static void digi_wakeup_write_lock(struct work_struct *work)
 static void digi_wakeup_write(struct usb_serial_port *port)
 {
 	struct tty_struct *tty = tty_port_tty_get(&port->port);
-	if (tty) {
-		tty_wakeup(tty);
-		tty_kref_put(tty);
-	}
+	tty_wakeup(tty);
+	tty_kref_put(tty);
 }
 
 
@@ -1118,7 +1116,7 @@ static void digi_break_ctl(struct tty_struct *tty, int break_state)
 }
 
 
-static int digi_tiocmget(struct tty_struct *tty)
+static int digi_tiocmget(struct tty_struct *tty, struct file *file)
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct digi_port *priv = usb_get_serial_port_data(port);
@@ -1134,8 +1132,8 @@ static int digi_tiocmget(struct tty_struct *tty)
 }
 
 
-static int digi_tiocmset(struct tty_struct *tty,
-					unsigned int set, unsigned int clear)
+static int digi_tiocmset(struct tty_struct *tty, struct file *file,
+	unsigned int set, unsigned int clear)
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct digi_port *priv = usb_get_serial_port_data(port);
@@ -1674,7 +1672,7 @@ static int digi_read_inb_callback(struct urb *urb)
 		priv->dp_throttle_restart = 1;
 
 	/* receive data */
-	if (tty && opcode == DIGI_CMD_RECEIVE_DATA) {
+	if (opcode == DIGI_CMD_RECEIVE_DATA) {
 		/* get flag from port_status */
 		flag = 0;
 
@@ -1755,12 +1753,10 @@ static int digi_read_oob_callback(struct urb *urb)
 			return -1;
 
 		tty = tty_port_tty_get(&port->port);
-
 		rts = 0;
-		if (tty)
-			rts = tty->termios->c_cflag & CRTSCTS;
+		rts = tty->termios->c_cflag & CRTSCTS;
 		
-		if (tty && opcode == DIGI_CMD_READ_INPUT_SIGNALS) {
+		if (opcode == DIGI_CMD_READ_INPUT_SIGNALS) {
 			spin_lock(&priv->dp_port_lock);
 			/* convert from digi flags to termiox flags */
 			if (val & DIGI_READ_INPUT_SIGNALS_CTS) {

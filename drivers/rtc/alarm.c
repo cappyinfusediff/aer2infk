@@ -97,7 +97,7 @@ static void update_timer_locked(struct alarm_queue *base, bool head_removed)
 	}
 
 	hrtimer_try_to_cancel(&base->timer);
-	base->timer.node.expires = ktime_add(base->delta, alarm->expires);
+	base->timer._expires = ktime_add(base->delta, alarm->expires);
 	base->timer._softexpires = ktime_add(base->delta, alarm->softexpires);
 	hrtimer_start_expires(&base->timer, HRTIMER_MODE_ABS);
 }
@@ -317,6 +317,11 @@ ktime_t alarm_get_elapsed_realtime(void)
 	return now;
 }
 
+#if 0
+extern int is_under_at_sleep_cmd;	//NAGSM_Android_SEL_Kernel_Aakash_20100503
+extern int get_wakelock_for_AT_SLEEP(void); //NAGSM_Android_SEL_Kernel_Aakash_20100503
+#endif
+
 static enum hrtimer_restart alarm_timer_triggered(struct hrtimer *timer)
 {
 	struct alarm_queue *base;
@@ -325,6 +330,16 @@ static enum hrtimer_restart alarm_timer_triggered(struct hrtimer *timer)
 	ktime_t now;
 
 	spin_lock_irqsave(&alarm_slock, flags);
+
+#if 0
+	//NAGSM_Android_SEL_Kernel_Aakash_20100503
+	//This piece of code needs to be called before acquiring any other wakelock		
+	if(is_under_at_sleep_cmd){	//This is force sleep mode, so aquire wakelock until dfta is functional again.
+		get_wakelock_for_AT_SLEEP();	//This wakelock will be released when charging reconnection is over.
+		is_under_at_sleep_cmd = 0;
+	}
+	//NAGSM_Android_SEL_Kernel_Aakash_20100503
+#endif
 
 	base = container_of(timer, struct alarm_queue, timer);
 	now = base->stopped ? base->stopped_time : hrtimer_cb_get_time(timer);
@@ -389,7 +404,7 @@ static int alarm_suspend(struct platform_device *pdev, pm_message_t state)
 
 	hrtimer_cancel(&alarms[ANDROID_ALARM_RTC_WAKEUP].timer);
 	hrtimer_cancel(&alarms[
-			ANDROID_ALARM_ELAPSED_REALTIME_WAKEUP].timer);
+			ANDROID_ALARM_ELAPSED_REALTIME_WAKEUP_MASK].timer);
 
 	tmp_queue = &alarms[ANDROID_ALARM_RTC_WAKEUP];
 	if (tmp_queue->first)

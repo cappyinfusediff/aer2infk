@@ -764,16 +764,6 @@ int fix_alignment(struct pt_regs *regs)
 	nb = aligninfo[instr].len;
 	flags = aligninfo[instr].flags;
 
-	/* ldbrx/stdbrx overlap lfs/stfs in the DSISR unfortunately */
-	if (IS_XFORM(instruction) && ((instruction >> 1) & 0x3ff) == 532) {
-		nb = 8;
-		flags = LD+SW;
-	} else if (IS_XFORM(instruction) &&
-		   ((instruction >> 1) & 0x3ff) == 660) {
-		nb = 8;
-		flags = ST+SW;
-	}
-
 	/* Byteswap little endian loads and stores */
 	swiz = 0;
 	if (regs->msr & MSR_LE) {
@@ -899,7 +889,7 @@ int fix_alignment(struct pt_regs *regs)
 #ifdef CONFIG_PPC_FPU
 			preempt_disable();
 			enable_kernel_fp();
-			cvt_df(&data.dd, (float *)&data.v[4]);
+			cvt_df(&data.dd, (float *)&data.v[4], &current->thread);
 			preempt_enable();
 #else
 			return 0;
@@ -943,7 +933,7 @@ int fix_alignment(struct pt_regs *regs)
 #ifdef CONFIG_PPC_FPU
 		preempt_disable();
 		enable_kernel_fp();
-		cvt_fd((float *)&data.v[4], &data.dd);
+		cvt_fd((float *)&data.v[4], &data.dd, &current->thread);
 		preempt_enable();
 #else
 		return 0;

@@ -34,8 +34,6 @@
 #include <linux/swap.h>
 #include <linux/ksm.h>
 #include <linux/hash.h>
-#include <linux/freezer.h>
-#include <linux/oom.h>
 
 #include <asm/tlbflush.h>
 #include "internal.h"
@@ -189,9 +187,6 @@ static unsigned int ksm_thread_pages_to_scan = 100;
 /* Milliseconds ksmd should sleep between batches */
 static unsigned int ksm_thread_sleep_millisecs = 20;
 
-/* Boolean to indicate whether to use deferred timer or not */
-static bool use_deferred_timer;
-
 #define KSM_RUN_STOP	0
 #define KSM_RUN_MERGE	1
 #define KSM_RUN_UNMERGE	2
@@ -305,6 +300,25 @@ static inline int in_stable_tree(struct rmap_item *rmap_item)
 	return rmap_item->address & STABLE_FLAG;
 }
 
+static void hold_anon_vma(struct rmap_item *rmap_item,
+			  struct anon_vma *anon_vma)
+{
+	rmap_item->anon_vma = anon_vma;
+	atomic_inc(&anon_vma->external_refcount);
+}
+
+static void drop_anon_vma(struct rmap_item *rmap_item)
+{
+	struct anon_vma *anon_vma = rmap_item->anon_vma;
+
+	if (atomic_dec_and_lock(&anon_vma->external_refcount, &anon_vma->lock)) {
+		int empty = list_empty(&anon_vma->head);
+		spin_unlock(&anon_vma->lock);
+		if (empty)
+			anon_vma_free(anon_vma);
+	}
+}
+
 /*
  * ksmd, and unmerge_and_remove_all_rmap_items(), must not touch an mm's
  * page tables after it has passed through ksm_exit() - which, if necessary,
@@ -387,7 +401,7 @@ static void break_cow(struct rmap_item *rmap_item)
 	 * It is not an accident that whenever we want to break COW
 	 * to undo, we also need to drop a reference to the anon_vma.
 	 */
-	put_anon_vma(rmap_item->anon_vma);
+	drop_anon_vma(rmap_item);
 
 	down_read(&mm->mmap_sem);
 	if (ksm_test_exit(mm))
@@ -400,20 +414,6 @@ static void break_cow(struct rmap_item *rmap_item)
 	break_ksm(vma, addr);
 out:
 	up_read(&mm->mmap_sem);
-}
-
-static struct page *page_trans_compound_anon(struct page *page)
-{
-	if (PageTransCompound(page)) {
-		struct page *head = compound_trans_head(page);
-		/*
-		 * head may actually be splitted and freed from under
-		 * us but it's ok here.
-		 */
-		if (PageAnon(head))
-			return head;
-	}
-	return NULL;
 }
 
 static struct page *get_mergeable_page(struct rmap_item *rmap_item)
@@ -435,7 +435,7 @@ static struct page *get_mergeable_page(struct rmap_item *rmap_item)
 	page = follow_page(vma, addr, FOLL_GET);
 	if (IS_ERR_OR_NULL(page))
 		goto out;
-	if (PageAnon(page) || page_trans_compound_anon(page)) {
+	if (PageAnon(page)) {
 		flush_anon_page(vma, page, addr);
 		flush_dcache_page(page);
 	} else {
@@ -456,7 +456,7 @@ static void remove_node_from_stable_tree(struct stable_node *stable_node)
 			ksm_pages_sharing--;
 		else
 			ksm_pages_shared--;
-		put_anon_vma(rmap_item->anon_vma);
+		drop_anon_vma(rmap_item);
 		rmap_item->address &= PAGE_MASK;
 		cond_resched();
 	}
@@ -544,7 +544,7 @@ static void remove_rmap_item_from_tree(struct rmap_item *rmap_item)
 		else
 			ksm_pages_shared--;
 
-		put_anon_vma(rmap_item->anon_vma);
+		drop_anon_vma(rmap_item);
 		rmap_item->address &= PAGE_MASK;
 
 	} else if (rmap_item->address & UNSTABLE_FLAG) {
@@ -713,7 +713,6 @@ static int write_protect_page(struct vm_area_struct *vma, struct page *page,
 	if (addr == -EFAULT)
 		goto out;
 
-	BUG_ON(PageTransCompound(page));
 	ptep = page_check_address(page, mm, addr, &ptl, 0);
 	if (!ptep)
 		goto out;
@@ -724,7 +723,7 @@ static int write_protect_page(struct vm_area_struct *vma, struct page *page,
 		swapped = PageSwapCache(page);
 		flush_cache_page(vma, addr, page_to_pfn(page));
 		/*
-		 * Ok this is tricky, when get_user_pages_fast() run it doesn't
+		 * Ok this is tricky, when get_user_pages_fast() run it doesnt
 		 * take any lock, therefore the check that we are going to make
 		 * with the pagecount against the mapcount is racey and
 		 * O_DIRECT can happen right after the check.
@@ -789,7 +788,6 @@ static int replace_page(struct vm_area_struct *vma, struct page *page,
 		goto out;
 
 	pmd = pmd_offset(pud, addr);
-	BUG_ON(pmd_trans_huge(*pmd));
 	if (!pmd_present(*pmd))
 		goto out;
 
@@ -807,41 +805,14 @@ static int replace_page(struct vm_area_struct *vma, struct page *page,
 	set_pte_at_notify(mm, addr, ptep, mk_pte(kpage, vma->vm_page_prot));
 
 	page_remove_rmap(page);
-	if (!page_mapped(page))
-		try_to_free_swap(page);
+if (!page_mapped(page))
+try_to_free_swap(page);
 	put_page(page);
 
 	pte_unmap_unlock(ptep, ptl);
 	err = 0;
 out:
 	return err;
-}
-
-static int page_trans_compound_anon_split(struct page *page)
-{
-	int ret = 0;
-	struct page *transhuge_head = page_trans_compound_anon(page);
-	if (transhuge_head) {
-		/* Get the reference on the head to split it. */
-		if (get_page_unless_zero(transhuge_head)) {
-			/*
-			 * Recheck we got the reference while the head
-			 * was still anonymous.
-			 */
-			if (PageAnon(transhuge_head))
-				ret = split_huge_page(transhuge_head);
-			else
-				/*
-				 * Retry later if split_huge_page run
-				 * from under us.
-				 */
-				ret = 1;
-			put_page(transhuge_head);
-		} else
-			/* Retry later if split_huge_page run from under us. */
-			ret = 1;
-	}
-	return ret;
 }
 
 /*
@@ -864,9 +835,6 @@ static int try_to_merge_one_page(struct vm_area_struct *vma,
 
 	if (!(vma->vm_flags & VM_MERGEABLE))
 		goto out;
-	if (PageTransCompound(page) && page_trans_compound_anon_split(page))
-		goto out;
-	BUG_ON(PageTransCompound(page));
 	if (!PageAnon(page))
 		goto out;
 
@@ -939,8 +907,7 @@ static int try_to_merge_with_ksm_page(struct rmap_item *rmap_item,
 		goto out;
 
 	/* Must get reference to anon_vma while still holding mmap_sem */
-	rmap_item->anon_vma = vma->anon_vma;
-	get_anon_vma(vma->anon_vma);
+	hold_anon_vma(rmap_item, vma->anon_vma);
 out:
 	up_read(&mm->mmap_sem);
 	return err;
@@ -1296,7 +1263,7 @@ static struct rmap_item *scan_get_next_rmap_item(struct page **page)
 		 * LTP's KSM test from succeeding deterministically; so drain
 		 * them here (here rather than on entry to ksm_do_scan(),
 		 * so we don't IPI too often when pages_to_scan is set low).
-		 */
+ 		 */
 		lru_add_drain_all();
 
 		root_unstable_tree = RB_ROOT;
@@ -1335,13 +1302,7 @@ next_mm:
 			if (ksm_test_exit(mm))
 				break;
 			*page = follow_page(vma, ksm_scan.address, FOLL_GET);
-			if (IS_ERR_OR_NULL(*page)) {
-				ksm_scan.address += PAGE_SIZE;
-				cond_resched();
-				continue;
-			}
-			if (PageAnon(*page) ||
-			    page_trans_compound_anon(*page)) {
+			if (!IS_ERR_OR_NULL(*page) && PageAnon(*page)) {
 				flush_anon_page(vma, *page, ksm_scan.address);
 				flush_dcache_page(*page);
 				rmap_item = get_next_rmap_item(slot,
@@ -1355,7 +1316,8 @@ next_mm:
 				up_read(&mm->mmap_sem);
 				return rmap_item;
 			}
-			put_page(*page);
+			if (!IS_ERR_OR_NULL(*page))
+				put_page(*page);
 			ksm_scan.address += PAGE_SIZE;
 			cond_resched();
 		}
@@ -1415,7 +1377,7 @@ static void ksm_do_scan(unsigned int scan_npages)
 	struct rmap_item *rmap_item;
 	struct page *uninitialized_var(page);
 
-	while (scan_npages-- && likely(!freezing(current))) {
+	while (scan_npages--) {
 		cond_resched();
 		rmap_item = scan_get_next_rmap_item(&page);
 		if (!rmap_item)
@@ -1426,41 +1388,6 @@ static void ksm_do_scan(unsigned int scan_npages)
 	}
 }
 
-static void process_timeout(unsigned long __data)
-{
-	wake_up_process((struct task_struct *)__data);
-}
-
-static signed long __sched deferred_schedule_timeout(signed long timeout)
-{
-	struct timer_list timer;
-	unsigned long expire;
-
-	__set_current_state(TASK_INTERRUPTIBLE);
-	if (timeout < 0) {
-		pr_err("schedule_timeout: wrong timeout value %lx\n",
-							timeout);
-		__set_current_state(TASK_RUNNING);
-		goto out;
-	}
-
-	expire = timeout + jiffies;
-
-	setup_deferrable_timer_on_stack(&timer, process_timeout,
-			(unsigned long)current);
-	mod_timer(&timer, expire);
-	schedule();
-	del_singleshot_timer_sync(&timer);
-
-	/* Remove the timer from the object tracker */
-	destroy_timer_on_stack(&timer);
-
-	timeout = expire - jiffies;
-
-out:
-	return timeout < 0 ? 0 : timeout;
-}
-
 static int ksmd_should_run(void)
 {
 	return (ksm_run & KSM_RUN_MERGE) && !list_empty(&ksm_mm_head.mm_list);
@@ -1468,7 +1395,6 @@ static int ksmd_should_run(void)
 
 static int ksm_scan_thread(void *nothing)
 {
-	set_freezable();
 	set_user_nice(current, 5);
 
 	while (!kthread_should_stop()) {
@@ -1477,17 +1403,11 @@ static int ksm_scan_thread(void *nothing)
 			ksm_do_scan(ksm_thread_pages_to_scan);
 		mutex_unlock(&ksm_thread_mutex);
 
-		try_to_freeze();
-
 		if (ksmd_should_run()) {
-			if (use_deferred_timer)
-				deferred_schedule_timeout(
-				msecs_to_jiffies(ksm_thread_sleep_millisecs));
-			else
-				schedule_timeout_interruptible(
+			schedule_timeout_interruptible(
 				msecs_to_jiffies(ksm_thread_sleep_millisecs));
 		} else {
-			wait_event_freezable(ksm_thread_wait,
+			wait_event_interruptible(ksm_thread_wait,
 				ksmd_should_run() || kthread_should_stop());
 		}
 	}
@@ -1651,7 +1571,7 @@ again:
 		struct anon_vma_chain *vmac;
 		struct vm_area_struct *vma;
 
-		anon_vma_lock(anon_vma);
+		spin_lock(&anon_vma->lock);
 		list_for_each_entry(vmac, &anon_vma->head, same_anon_vma) {
 			vma = vmac->vma;
 			if (rmap_item->address < vma->vm_start ||
@@ -1674,7 +1594,7 @@ again:
 			if (!search_new_forks || !mapcount)
 				break;
 		}
-		anon_vma_unlock(anon_vma);
+		spin_unlock(&anon_vma->lock);
 		if (!mapcount)
 			goto out;
 	}
@@ -1704,7 +1624,7 @@ again:
 		struct anon_vma_chain *vmac;
 		struct vm_area_struct *vma;
 
-		anon_vma_lock(anon_vma);
+		spin_lock(&anon_vma->lock);
 		list_for_each_entry(vmac, &anon_vma->head, same_anon_vma) {
 			vma = vmac->vma;
 			if (rmap_item->address < vma->vm_start ||
@@ -1722,11 +1642,11 @@ again:
 			ret = try_to_unmap_one(page, vma,
 					rmap_item->address, flags);
 			if (ret != SWAP_AGAIN || !page_mapped(page)) {
-				anon_vma_unlock(anon_vma);
+				spin_unlock(&anon_vma->lock);
 				goto out;
 			}
 		}
-		anon_vma_unlock(anon_vma);
+		spin_unlock(&anon_vma->lock);
 	}
 	if (!search_new_forks++)
 		goto again;
@@ -1756,7 +1676,7 @@ again:
 		struct anon_vma_chain *vmac;
 		struct vm_area_struct *vma;
 
-		anon_vma_lock(anon_vma);
+		spin_lock(&anon_vma->lock);
 		list_for_each_entry(vmac, &anon_vma->head, same_anon_vma) {
 			vma = vmac->vma;
 			if (rmap_item->address < vma->vm_start ||
@@ -1773,11 +1693,11 @@ again:
 
 			ret = rmap_one(page, vma, rmap_item->address, arg);
 			if (ret != SWAP_AGAIN) {
-				anon_vma_unlock(anon_vma);
+				spin_unlock(&anon_vma->lock);
 				goto out;
 			}
 		}
-		anon_vma_unlock(anon_vma);
+		spin_unlock(&anon_vma->lock);
 	}
 	if (!search_new_forks++)
 		goto again;
@@ -1833,7 +1753,7 @@ static int ksm_memory_callback(struct notifier_block *self,
 		 * that here we take ksm_thread_mutex inside notifier chain
 		 * mutex, and later take notifier chain mutex inside
 		 * ksm_thread_mutex to unlock it.   But that's safe because both
-		 * are inside mem_hotplug_mutex.
+ 		 * are inside mem_hotplug_mutex.
 		 */
 		mutex_lock_nested(&ksm_thread_mutex, SINGLE_DEPTH_NESTING);
 		break;
@@ -1943,11 +1863,9 @@ static ssize_t run_store(struct kobject *kobj, struct kobj_attribute *attr,
 	if (ksm_run != flags) {
 		ksm_run = flags;
 		if (flags & KSM_RUN_UNMERGE) {
-			int oom_score_adj;
-
-			oom_score_adj = test_set_oom_score_adj(OOM_SCORE_ADJ_MAX);
+			current->flags |= PF_OOM_ORIGIN;
 			err = unmerge_and_remove_all_rmap_items();
-			test_set_oom_score_adj(oom_score_adj);
+			current->flags &= ~PF_OOM_ORIGIN;
 			if (err) {
 				ksm_run = KSM_RUN_STOP;
 				count = err;
@@ -1962,26 +1880,6 @@ static ssize_t run_store(struct kobject *kobj, struct kobj_attribute *attr,
 	return count;
 }
 KSM_ATTR(run);
-
-static ssize_t deferred_timer_show(struct kobject *kobj,
-				    struct kobj_attribute *attr, char *buf)
-{
-	return snprintf(buf, 8, "%d\n", use_deferred_timer);
-}
-
-static ssize_t deferred_timer_store(struct kobject *kobj,
-				     struct kobj_attribute *attr,
-				     const char *buf, size_t count)
-{
-	unsigned long enable;
-	int err;
-
-	err = kstrtoul(buf, 10, &enable);
-	use_deferred_timer = enable;
-
-	return count;
-}
-KSM_ATTR(deferred_timer);
 
 static ssize_t pages_shared_show(struct kobject *kobj,
 				 struct kobj_attribute *attr, char *buf)
@@ -2037,7 +1935,6 @@ static struct attribute *ksm_attrs[] = {
 	&pages_unshared_attr.attr,
 	&pages_volatile_attr.attr,
 	&full_scans_attr.attr,
-	&deferred_timer_attr.attr,
 	NULL,
 };
 

@@ -1,6 +1,6 @@
 /*
  * Driver for S5K5CCGX (3MP camera) from LSI
- *
+ * 
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -15,4 +15,6 @@ struct s5k5ccgx_platform_data {
 
 	/* This SoC supports Parallel & CSI-2 */
 	int is_mipi;
+	int (*power_en) (int);
 };
+

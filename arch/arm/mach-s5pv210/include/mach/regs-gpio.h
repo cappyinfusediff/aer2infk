@@ -15,6 +15,7 @@
 
 #include <mach/map.h>
 
+
 /* Base addresses for each of the banks */
 
 #define S5PV210_GPA0_BASE		(S5P_VA_GPIO + 0x000)
@@ -73,6 +74,22 @@
 #define S5PV210_ETC1_BASE		(S5P_VA_GPIO + 0x620)
 #define S5PV210_ETC2_BASE		(S5P_VA_GPIO + 0x640)
 #define S5PV210_ETC4_BASE		(S5P_VA_GPIO + 0x660)
+
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD)
+#define S5PV210_GPJ1CON                 (S5PV210_GPJ1_BASE + 0x00) 
+#define S5PV210_GPJ1DAT                 (S5PV210_GPJ1_BASE + 0x04)
+#define S5PV210_GPJ1PUD                 (S5PV210_GPJ1_BASE + 0x08)
+#define S5PV210_GPJ1DRV                 (S5PV210_GPJ1_BASE + 0x0c)
+#define S5PV210_GPJ1CONPDN              (S5PV210_GPJ1_BASE + 0x10)
+#define S5PV210_GPJ1PUDPDN              (S5PV210_GPJ1_BASE + 0x14)
+
+#define S5PV210_GPJ2CON                 (S5PV210_GPJ2_BASE + 0x00)
+#define S5PV210_GPJ2DAT                 (S5PV210_GPJ2_BASE + 0x04)
+#define S5PV210_GPJ2PUD                 (S5PV210_GPJ2_BASE + 0x08)
+#define S5PV210_GPJ2DRV                 (S5PV210_GPJ2_BASE + 0x0c)
+#define S5PV210_GPJ2CONPDN              (S5PV210_GPJ2_BASE + 0x10)
+#define S5PV210_GPJ2PUDPDN              (S5PV210_GPJ2_BASE + 0x14)
+#endif
 
 #define S5PV210_GPA0_INT_CON		(S5P_VA_GPIO + 0x700)
 #define S5PV210_GPA0_INT_FLTCON0		(S5P_VA_GPIO + 0x800)
@@ -257,6 +274,13 @@
 #define eint_filt_reg(irq)		((eint_offset(irq)) >> 2)
 #define eint_mask_reg(irq)		((eint_offset(irq)) >> 3)
 #define eint_pend_reg(irq)		((eint_offset(irq)) >> 3)
+
+/* values for S5P_EXTINT0 */
+#define S5P_EXTINT_LOWLEV		(0x00)
+#define S5P_EXTINT_HILEV		(0x01)
+#define S5P_EXTINT_FALLEDGE		(0x02)
+#define S5P_EXTINT_RISEEDGE		(0x03)
+#define S5P_EXTINT_BOTHEDGE		(0x04)
 
 #define EINT_MODE		S3C_GPIO_SFN(0xf)
 

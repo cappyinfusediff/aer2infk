@@ -73,14 +73,12 @@ int debug_lockdep_rcu_enabled(void)
 EXPORT_SYMBOL_GPL(debug_lockdep_rcu_enabled);
 
 /**
- * rcu_read_lock_bh_held() - might we be in RCU-bh read-side critical section?
+ * rcu_read_lock_bh_held - might we be in RCU-bh read-side critical section?
  *
  * Check for bottom half being disabled, which covers both the
  * CONFIG_PROVE_RCU and not cases.  Note that if someone uses
  * rcu_read_lock_bh(), but then later enables BH, lockdep (if enabled)
- * will show the situation.  This is useful for debug checks in functions
- * that require that they be called within an RCU read-side critical
- * section.
+ * will show the situation.
  *
  * Check debug_lockdep_rcu_enabled() to prevent false positives during boot.
  */
@@ -142,17 +140,10 @@ static int rcuhead_fixup_init(void *addr, enum debug_obj_state state)
 		 * Ensure that queued callbacks are all executed.
 		 * If we detect that we are nested in a RCU read-side critical
 		 * section, we should simply fail, otherwise we would deadlock.
-		 * In !PREEMPT configurations, there is no way to tell if we are
-		 * in a RCU read-side critical section or not, so we never
-		 * attempt any fixup and just print a warning.
 		 */
-#ifndef CONFIG_PREEMPT
-		WARN_ON_ONCE(1);
-		return 0;
-#endif
 		if (rcu_preempt_depth() != 0 || preempt_count() != 0 ||
 		    irqs_disabled()) {
-			WARN_ON_ONCE(1);
+			WARN_ON(1);
 			return 0;
 		}
 		rcu_barrier();
@@ -191,17 +182,10 @@ static int rcuhead_fixup_activate(void *addr, enum debug_obj_state state)
 		 * Ensure that queued callbacks are all executed.
 		 * If we detect that we are nested in a RCU read-side critical
 		 * section, we should simply fail, otherwise we would deadlock.
-		 * In !PREEMPT configurations, there is no way to tell if we are
-		 * in a RCU read-side critical section or not, so we never
-		 * attempt any fixup and just print a warning.
 		 */
-#ifndef CONFIG_PREEMPT
-		WARN_ON_ONCE(1);
-		return 0;
-#endif
 		if (rcu_preempt_depth() != 0 || preempt_count() != 0 ||
 		    irqs_disabled()) {
-			WARN_ON_ONCE(1);
+			WARN_ON(1);
 			return 0;
 		}
 		rcu_barrier();
@@ -228,17 +212,14 @@ static int rcuhead_fixup_free(void *addr, enum debug_obj_state state)
 		 * Ensure that queued callbacks are all executed.
 		 * If we detect that we are nested in a RCU read-side critical
 		 * section, we should simply fail, otherwise we would deadlock.
-		 * In !PREEMPT configurations, there is no way to tell if we are
-		 * in a RCU read-side critical section or not, so we never
-		 * attempt any fixup and just print a warning.
 		 */
 #ifndef CONFIG_PREEMPT
-		WARN_ON_ONCE(1);
+		WARN_ON(1);
 		return 0;
-#endif
+#else
 		if (rcu_preempt_depth() != 0 || preempt_count() != 0 ||
 		    irqs_disabled()) {
-			WARN_ON_ONCE(1);
+			WARN_ON(1);
 			return 0;
 		}
 		rcu_barrier();
@@ -246,6 +227,7 @@ static int rcuhead_fixup_free(void *addr, enum debug_obj_state state)
 		rcu_barrier_bh();
 		debug_object_free(head, &rcuhead_debug_descr);
 		return 1;
+#endif
 	default:
 		return 0;
 	}

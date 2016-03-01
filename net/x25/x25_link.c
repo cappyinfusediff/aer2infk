@@ -31,8 +31,8 @@
 #include <linux/init.h>
 #include <net/x25.h>
 
-LIST_HEAD(x25_neigh_list);
-DEFINE_RWLOCK(x25_neigh_list_lock);
+static LIST_HEAD(x25_neigh_list);
+static DEFINE_RWLOCK(x25_neigh_list_lock);
 
 static void x25_t20timer_expiry(unsigned long);
 
@@ -90,9 +90,6 @@ void x25_link_control(struct sk_buff *skb, struct x25_neigh *nb,
 			break;
 
 		case X25_DIAGNOSTIC:
-			if (!pskb_may_pull(skb, X25_STD_MIN_LEN + 4))
-				break;
-
 			printk(KERN_WARNING "x25: diagnostic #%d - "
 			       "%02X %02X %02X\n",
 			       skb->data[3], skb->data[4],
@@ -363,20 +360,16 @@ int x25_subscr_ioctl(unsigned int cmd, void __user *arg)
 	dev_put(dev);
 
 	if (cmd == SIOCX25GSUBSCRIP) {
-		read_lock_bh(&x25_neigh_list_lock);
 		x25_subscr.extended	     = nb->extended;
 		x25_subscr.global_facil_mask = nb->global_facil_mask;
-		read_unlock_bh(&x25_neigh_list_lock);
 		rc = copy_to_user(arg, &x25_subscr,
 				  sizeof(x25_subscr)) ? -EFAULT : 0;
 	} else {
 		rc = -EINVAL;
 		if (!(x25_subscr.extended && x25_subscr.extended != 1)) {
 			rc = 0;
-			write_lock_bh(&x25_neigh_list_lock);
 			nb->extended	     = x25_subscr.extended;
 			nb->global_facil_mask = x25_subscr.global_facil_mask;
-			write_unlock_bh(&x25_neigh_list_lock);
 		}
 	}
 	x25_neigh_put(nb);

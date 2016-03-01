@@ -46,6 +46,7 @@
 #include <linux/uaccess.h>
 #include <linux/file.h>
 #include <linux/socket.h>
+#include <linux/smp_lock.h>
 #include <linux/slab.h>
 #include <linux/kthread.h>
 
@@ -247,16 +248,16 @@ static void gannet_recvloop(void)
 	int bufsize = 1600;
 	unsigned char buf[bufsize + 1];
 
-	static DEFINE_MUTEX(ker_lock_mutex);
+	/* kernel thread initialization */
+	lock_kernel();
 
-    mutex_lock(&ker_lock_mutex);
 	current->flags |= PF_NOFREEZE;
 
 	/* daemonize (take care with signals,
 	   after daemonize they are disabled) */
 	daemonize(MODULE_NAME);
 	allow_signal(SIGKILL);
-	mutex_unlock(&ker_lock_mutex);
+	unlock_kernel();
 
 
 	/* main loop */

@@ -411,46 +411,46 @@ static inline int to_bit_offset(int grp, unsigned int irq)
 	return offset;
 }
 
-static inline void s5pv210_irq_eint_group_mask(struct irq_data *d)
+static inline void s5pv210_irq_eint_group_mask(unsigned int irq)
 {
 	struct s5pv210_eint_group_t *group;
 	unsigned long flags;
 	int grp;
 
-	grp = to_group_number(d->irq);
+	grp = to_group_number(irq);
 	group = &eint_groups[grp];
 	spin_lock_irqsave(&eint_group_lock, flags);
 	eint_groups[grp].int_mask |=
-		(1 << (group->mask_ofs + to_irq_number(grp, d->irq)));
+		(1 << (group->mask_ofs + to_irq_number(grp, irq)));
 
 	writel(eint_groups[grp].int_mask, group->mask_reg);
 	spin_unlock_irqrestore(&eint_group_lock, flags);
 }
 
-static inline void s5pv210_irq_eint_group_ack(struct irq_data *d)
+static inline void s5pv210_irq_eint_group_ack(unsigned int irq)
 {
 	struct s5pv210_eint_group_t *group;
 	unsigned long flags;
 	int grp;
 	u32 pend;
 
-	grp = to_group_number(d->irq);
+	grp = to_group_number(irq);
 	group = &eint_groups[grp];
 
 	spin_lock_irqsave(&eint_group_lock, flags);
-	pend = (1 << (group->pend_ofs + to_irq_number(grp, d->irq)));
+	pend = (1 << (group->pend_ofs + to_irq_number(grp, irq)));
 
 	writel(pend, group->pend_reg);
 	spin_unlock_irqrestore(&eint_group_lock, flags);
 }
 
-static void s5pv210_irq_eint_group_unmask(struct irq_data *d)
+static void s5pv210_irq_eint_group_unmask(unsigned int irq)
 {
 	struct s5pv210_eint_group_t *group;
 	unsigned long flags;
 	int grp;
 
-	grp = to_group_number(d->irq);
+	grp = to_group_number(irq);
 	group = &eint_groups[grp];
 
 	/* for level triggered interrupts, masking doesn't prevent
@@ -460,33 +460,32 @@ static void s5pv210_irq_eint_group_unmask(struct irq_data *d)
 	 * already.  we have to ack it here, after the handler runs,
 	 * or else we get a false interrupt.
 	 */
-	if (irqd_is_level_type(d))
-		s5pv210_irq_eint_group_ack(d);
+	if (irq_to_desc(irq)->status & IRQ_LEVEL)
+		s5pv210_irq_eint_group_ack(irq);
 
 	spin_lock_irqsave(&eint_group_lock, flags);
 	eint_groups[grp].int_mask &=
-		~(1 << (group->mask_ofs + to_irq_number(grp, d->irq)));
+		~(1 << (group->mask_ofs + to_irq_number(grp, irq)));
 
 	writel(eint_groups[grp].int_mask, group->mask_reg);
 	spin_unlock_irqrestore(&eint_group_lock, flags);
 }
 
-static void s5pv210_irq_eint_group_maskack(struct irq_data *d)
+static void s5pv210_irq_eint_group_maskack(unsigned int irq)
 {
 	/* compiler should in-line these */
-	s5pv210_irq_eint_group_mask(d);
-	s5pv210_irq_eint_group_ack(d);
+	s5pv210_irq_eint_group_mask(irq);
+	s5pv210_irq_eint_group_ack(irq);
 }
 
-static int s5pv210_irq_eint_group_set_type(struct irq_data *d,
-					   unsigned int type)
+static int s5pv210_irq_eint_group_set_type(unsigned int irq, unsigned int type)
 {
 	struct s5pv210_eint_group_t *group;
 	unsigned long flags;
 	int grp, shift;
 	u32 mask, newvalue = 0;
 
-	grp = to_group_number(d->irq);
+	grp = to_group_number(irq);
 	group = &eint_groups[grp];
 
 	switch (type) {
@@ -495,23 +494,23 @@ static int s5pv210_irq_eint_group_set_type(struct irq_data *d,
 		break;
 
 	case IRQ_TYPE_EDGE_RISING:
-		newvalue = S5P_IRQ_TYPE_EDGE_RISING;
+		newvalue = S5P_EXTINT_RISEEDGE;
 		break;
 
 	case IRQ_TYPE_EDGE_FALLING:
-		newvalue = S5P_IRQ_TYPE_EDGE_FALLING;
+		newvalue = S5P_EXTINT_FALLEDGE;
 		break;
 
 	case IRQ_TYPE_EDGE_BOTH:
-		newvalue = S5P_IRQ_TYPE_EDGE_BOTH;
+		newvalue = S5P_EXTINT_BOTHEDGE;
 		break;
 
 	case IRQ_TYPE_LEVEL_LOW:
-		newvalue = S5P_IRQ_TYPE_LEVEL_LOW;
+		newvalue = S5P_EXTINT_LOWLEV;
 		break;
 
 	case IRQ_TYPE_LEVEL_HIGH:
-		newvalue = S5P_IRQ_TYPE_LEVEL_HIGH;
+		newvalue = S5P_EXTINT_HILEV;
 		break;
 
 	default:
@@ -519,7 +518,7 @@ static int s5pv210_irq_eint_group_set_type(struct irq_data *d,
 		return -1;
 	}
 
-	shift = to_bit_offset(grp, d->irq);
+	shift = to_bit_offset(grp, irq);
 	mask = 0x7 << shift;
 
 	spin_lock_irqsave(&eint_group_lock, flags);
@@ -533,11 +532,11 @@ static int s5pv210_irq_eint_group_set_type(struct irq_data *d,
 
 static struct irq_chip s5pv210_irq_eint_group = {
 	.name		= "s5pv210-eint-group",
-	.irq_mask	= s5pv210_irq_eint_group_mask,
-	.irq_unmask	= s5pv210_irq_eint_group_unmask,
-	.irq_mask_ack	= s5pv210_irq_eint_group_maskack,
-	.irq_ack	= s5pv210_irq_eint_group_ack,
-	.irq_set_type	= s5pv210_irq_eint_group_set_type,
+	.mask		= s5pv210_irq_eint_group_mask,
+	.unmask		= s5pv210_irq_eint_group_unmask,
+	.mask_ack	= s5pv210_irq_eint_group_maskack,
+	.ack		= s5pv210_irq_eint_group_ack,
+	.set_type	= s5pv210_irq_eint_group_set_type,
 };
 
 /*
@@ -592,12 +591,12 @@ int __init s5pv210_init_irq_eint_group(void)
 	int irq;
 
 	for (irq = IRQ_EINT_GROUP_BASE; irq < NR_IRQS; irq++) {
-		irq_set_chip(irq, &s5pv210_irq_eint_group);
-		irq_set_handler(irq, handle_level_irq);
+		set_irq_chip(irq, &s5pv210_irq_eint_group);
+		set_irq_handler(irq, handle_level_irq);
 		set_irq_flags(irq, IRQF_VALID);
 	}
 
-	irq_set_chained_handler(IRQ_GPIOINT, s5pv210_irq_demux_eint_group);
+	set_irq_chained_handler(IRQ_GPIOINT, s5pv210_irq_demux_eint_group);
 
 	return 0;
 }

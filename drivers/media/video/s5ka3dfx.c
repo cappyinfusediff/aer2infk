@@ -16,6 +16,7 @@
 #include <linux/version.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-subdev.h>
+#include <media/v4l2-i2c-drv.h>
 #include <media/s5ka3dfx_platform.h>
 
 #ifdef CONFIG_VIDEO_SAMSUNG_V4L2
@@ -88,7 +89,6 @@ struct s5ka3dfx_state {
 
 enum {
 	S5KA3DFX_PREVIEW_QCIF,
-	S5KA3DFX_PREVIEW_QVGA,
 	S5KA3DFX_PREVIEW_VGA,
 };
 
@@ -100,7 +100,6 @@ struct s5ka3dfx_enum_framesize {
 
 struct s5ka3dfx_enum_framesize s5ka3dfx_framesize_list[] = {
 	{ S5KA3DFX_PREVIEW_QCIF, 176, 144 },
-	{ S5KA3DFX_PREVIEW_QVGA, 320, 240 },
 	{ S5KA3DFX_PREVIEW_VGA, 640, 480 }
 };
 
@@ -172,6 +171,7 @@ static struct s5ka3dfx_regset_table fps_vt_table[] = {
 	S5KA3DFX_REGSET_TABLE_ELEMENT(0, s5ka3dfx_vt_fps_7),
 	S5KA3DFX_REGSET_TABLE_ELEMENT(1, s5ka3dfx_vt_fps_10),
 	S5KA3DFX_REGSET_TABLE_ELEMENT(2, s5ka3dfx_vt_fps_15),
+	S5KA3DFX_REGSET_TABLE_ELEMENT(3, s5ka3dfx_vt_fps_auto),
 };
 
 static struct s5ka3dfx_regset_table fps_table[] = {
@@ -211,10 +211,14 @@ static struct s5ka3dfx_regset_table init_vt_reg[] = {
 	S5KA3DFX_REGSET_TABLE_ELEMENT(0, s5ka3dfx_init_vt_reg),
 };
 
+//NAGSM_ANDROID_HQ_CAMERA_SoojinKim_20110512 : vtmode 2
+static struct s5ka3dfx_regset_table init_vt2_reg[] = {
+	S5KA3DFX_REGSET_TABLE_ELEMENT(0, s5ka3dfx_init_vt2_reg),
+};
+
 static struct s5ka3dfx_regset_table frame_size[] = {
 	S5KA3DFX_REGSET_TABLE_ELEMENT(0, s5ka3dfx_QCIF),
-	S5KA3DFX_REGSET_TABLE_ELEMENT(1, s5ka3dfx_QVGA),
-	S5KA3DFX_REGSET_TABLE_ELEMENT(2, s5ka3dfx_Return_VGA),
+	S5KA3DFX_REGSET_TABLE_ELEMENT(1, s5ka3dfx_Return_VGA),
 };
 static int s5ka3dfx_reset(struct v4l2_subdev *sd)
 {
@@ -237,7 +241,7 @@ static int s5ka3dfx_reset(struct v4l2_subdev *sd)
 static int s5ka3dfx_i2c_write_multi(struct i2c_client *client,
 				    unsigned short addr, unsigned int w_data)
 {
-	int retry_count = 4;
+	int retry_count = 5;
 	unsigned char buf[2];
 	struct i2c_msg msg = { client->addr, 0, 2, buf };
 	int ret;
@@ -254,13 +258,12 @@ static int s5ka3dfx_i2c_write_multi(struct i2c_client *client,
 	}
 #endif
 
-	do {
+	while (retry_count--) {
 		ret = i2c_transfer(client->adapter, &msg, 1);
 		if (likely(ret == 1))
 			break;
 		msleep(POLL_TIME_MS);
-	} while (retry_count--);
-
+	}
 	if (ret != 1)
 		dev_err(&client->dev, "I2C is not working.\n");
 
@@ -288,7 +291,7 @@ static int s5ka3dfx_write_regs(struct v4l2_subdev *sd,
 }
 
 static int s5ka3dfx_write_regset_table(struct v4l2_subdev *sd,
-			const struct s5ka3dfx_regset_table *regset_table)
+				struct s5ka3dfx_regset_table *regset_table)
 {
 	int err;
 
@@ -367,7 +370,7 @@ static struct v4l2_queryctrl s5ka3dfx_controls[] = {
 	/* Add here if needed */
 };
 
-const char * const *s5ka3dfx_ctrl_get_menu(u32 id)
+const char **s5ka3dfx_ctrl_get_menu(u32 id)
 {
 	pr_debug("%s is called... id : %d\n", __func__, id);
 
@@ -435,7 +438,7 @@ static int s5ka3dfx_s_crystal_freq(struct v4l2_subdev *sd, u32 freq, u32 flags)
 	return err;
 }
 
-static int s5ka3dfx_g_mbus_fmt(struct v4l2_subdev *sd, struct v4l2_mbus_framefmt *fmt)
+static int s5ka3dfx_g_fmt(struct v4l2_subdev *sd, struct v4l2_format *fmt)
 {
 	int err = 0;
 
@@ -477,28 +480,24 @@ static void s5ka3dfx_set_framesize(struct v4l2_subdev *sd,
 			__func__, state->pix.width, state->pix.height,
 			state->framesize_index);
 }
-static int s5ka3dfx_s_mbus_fmt(struct v4l2_subdev *sd,
-			       struct v4l2_mbus_framefmt *fmt)
+static int s5ka3dfx_s_fmt(struct v4l2_subdev *sd, struct v4l2_format *fmt)
 {
 	struct s5ka3dfx_state *state =
 		container_of(sd, struct s5ka3dfx_state, sd);
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 	int err = 0;
 
-	if (fmt->code == V4L2_MBUS_FMT_FIXED &&
-			fmt->colorspace != V4L2_COLORSPACE_JPEG) {
+	if (fmt->fmt.pix.pixelformat == V4L2_PIX_FMT_JPEG &&
+			fmt->fmt.pix.colorspace != V4L2_COLORSPACE_JPEG) {
 		dev_dbg(&client->dev,
 				"%s: mismatch in pixelformat and colorspace\n",
 				__func__);
 		return -EINVAL;
 	}
 
-	state->pix.width = fmt->width;
-	state->pix.height = fmt->height;
-	if (fmt->colorspace == V4L2_COLORSPACE_JPEG)
-		state->pix.pixelformat = V4L2_PIX_FMT_JPEG;
-	else
-		state->pix.pixelformat = 0; /* is this used anywhere? */
+	state->pix.width = fmt->fmt.pix.width;
+	state->pix.height = fmt->fmt.pix.height;
+	state->pix.pixelformat = fmt->fmt.pix.pixelformat;
 
 	s5ka3dfx_set_framesize(sd, s5ka3dfx_framesize_list,
 			ARRAY_SIZE(s5ka3dfx_framesize_list));
@@ -553,8 +552,8 @@ static int s5ka3dfx_enum_frameintervals(struct v4l2_subdev *sd,
 	return err;
 }
 
-static int s5ka3dfx_enum_mbus_fmt(struct v4l2_subdev *sd, unsigned int index,
-				  enum v4l2_mbus_pixelcode *code)
+static int s5ka3dfx_enum_fmt(struct v4l2_subdev *sd,
+			     struct v4l2_fmtdesc *fmtdesc)
 {
 	int err = 0;
 
@@ -563,7 +562,7 @@ static int s5ka3dfx_enum_mbus_fmt(struct v4l2_subdev *sd, unsigned int index,
 	return err;
 }
 
-static int s5ka3dfx_try_mbus_fmt(struct v4l2_subdev *sd, struct v4l2_mbus_framefmt *fmt)
+static int s5ka3dfx_try_fmt(struct v4l2_subdev *sd, struct v4l2_format *fmt)
 {
 	int err = 0;
 
@@ -576,11 +575,15 @@ static int s5ka3dfx_g_parm(struct v4l2_subdev *sd,
 			   struct v4l2_streamparm *param)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	int err = 0;
+	struct s5ka3dfx_state *state =
+		container_of(sd, struct s5ka3dfx_state, sd);
 
 	dev_dbg(&client->dev, "%s\n", __func__);
+	state->strm.parm.capture.timeperframe.numerator = 1;
+	state->strm.parm.capture.timeperframe.denominator = state->fps;
+	memcpy(param, &state->strm, sizeof(param));
 
-	return err;
+	return 0;
 }
 
 static int s5ka3dfx_s_parm(struct v4l2_subdev *sd,
@@ -723,7 +726,7 @@ out:
 
 /* set sensor register values for frame rate(fps) setting */
 static int s5ka3dfx_set_frame_rate(struct v4l2_subdev *sd,
-				   struct v4l2_control *ctrl)
+				   int state_fps)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 	struct s5ka3dfx_state *state =
@@ -733,14 +736,14 @@ static int s5ka3dfx_set_frame_rate(struct v4l2_subdev *sd,
 	int err = -EINVAL;
 	int fps_index;
 
-	dev_dbg(&client->dev, "%s: value : %d\n", __func__, ctrl->value);
+	dev_dbg(&client->dev, "%s: value : %d\n", __func__, state_fps);
 
 	pr_debug("state->vt_mode : %d\n", state->vt_mode);
 
-	switch (ctrl->value) {
+	switch (state_fps) {
 	case 0:
 		fps_index = 3;
-		break;
+		break; 
 
 	case 7:
 		fps_index = 0;
@@ -755,8 +758,8 @@ static int s5ka3dfx_set_frame_rate(struct v4l2_subdev *sd,
 		break;
 
 	default:
-		dev_dbg(&client->dev, "%s: Value(%d) is not supported\n",
-			__func__, ctrl->value);
+		dev_err(&client->dev, "%s: Value(%d) is not supported\n",
+			__func__, state_fps);
 		goto out;
 	}
 
@@ -769,6 +772,7 @@ static int s5ka3dfx_set_frame_rate(struct v4l2_subdev *sd,
 	state->fps = fps_index;
 
 	err = s5ka3dfx_write_regset_table(sd, fps);
+	state->fps = state_fps;
 out:
 	return err;
 }
@@ -901,9 +905,8 @@ static int s5ka3dfx_get_shutterspeed(struct v4l2_subdev *sd,
 		return read_value;
 	cintr |= read_value & 0xFF;
 
-	/* A3D Shutter Speed (Micro Sec.) =
-		(2 * (cintr - 1) * 814) / MCLK  * 1000 */
-	ctrl->value =  ((cintr - 1) * 1628) / (state->freq / 1000) * 1000;
+	/* A3D Shutter Speed (Sec.) = MCLK / (2 * (cintr - 1) * 814) */
+	ctrl->value =  ((cintr - 1) * 1628) / (state->freq / 1000);
 
 	dev_dbg(&client->dev,
 			"%s: get shutterspeed == %d\n", __func__, ctrl->value);
@@ -1005,7 +1008,9 @@ static int s5ka3dfx_s_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 	case V4L2_CID_CAMERA_FRAME_RATE:
 		dev_dbg(&client->dev, "%s: "
 				"V4L2_CID_CAMERA_FRAME_RATE\n", __func__);
-		err = s5ka3dfx_set_frame_rate(sd, ctrl);
+		state->fps = ctrl->value;
+		err = 0;
+		//err =  s5ka3dfx_set_frame_rate(sd, ctrl->value);
 		break;
 
 	case V4L2_CID_CAMERA_VGA_BLUR:
@@ -1055,7 +1060,7 @@ static int s5ka3dfx_s_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 	else
 		return 0;
 
- out:
+out:
 	dev_dbg(&client->dev, "%s: vidioc_s_ctrl failed\n", __func__);
 	return err;
 }
@@ -1090,9 +1095,13 @@ static int s5ka3dfx_init(struct v4l2_subdev *sd, u32 val)
 			err = s5ka3dfx_write_regset_table(sd, dataline);
 		else
 			err = s5ka3dfx_write_regset_table(sd, init_reg);
-	} else
-		err = s5ka3dfx_write_regset_table(sd, init_vt_reg);
-
+	}  //NAGSM_ANDROID_HQ_CAMERA_SoojinKim_20110512 : vtmode 2
+	else { 
+		if (state->vt_mode == 1)
+			err = s5ka3dfx_write_regset_table(sd, init_vt_reg);
+		else
+			err = s5ka3dfx_write_regset_table(sd, init_vt2_reg);
+	}
 	if (err < 0) {
 		/* This is preview fail */
 		state->check_previewdata = 100;
@@ -1101,55 +1110,37 @@ static int s5ka3dfx_init(struct v4l2_subdev *sd, u32 val)
 			__func__, state->check_previewdata);
 		return -EIO;
 	}
+	s5ka3dfx_set_frame_rate(sd, state->fps);
 
 	/* This is preview success */
 	state->check_previewdata = 0;
 	return 0;
 }
 
-static const struct v4l2_subdev_core_ops s5ka3dfx_core_ops = {
-	.init = s5ka3dfx_init,		/* initializing API */
-	.queryctrl = s5ka3dfx_queryctrl,
-	.querymenu = s5ka3dfx_querymenu,
-	.g_ctrl = s5ka3dfx_g_ctrl,
-	.s_ctrl = s5ka3dfx_s_ctrl,
-};
-
-static const struct v4l2_subdev_video_ops s5ka3dfx_video_ops = {
-	.s_crystal_freq = s5ka3dfx_s_crystal_freq,
-	.g_mbus_fmt = s5ka3dfx_g_mbus_fmt,
-	.s_mbus_fmt = s5ka3dfx_s_mbus_fmt,
-	.enum_framesizes = s5ka3dfx_enum_framesizes,
-	.enum_frameintervals = s5ka3dfx_enum_frameintervals,
-	.enum_mbus_fmt = s5ka3dfx_enum_mbus_fmt,
-	.try_mbus_fmt = s5ka3dfx_try_mbus_fmt,
-	.g_parm = s5ka3dfx_g_parm,
-	.s_parm = s5ka3dfx_s_parm,
-};
-
-static const struct v4l2_subdev_ops s5ka3dfx_ops = {
-	.core = &s5ka3dfx_core_ops,
-	.video = &s5ka3dfx_video_ops,
-};
-
 /*
- * s5ka3dfx_probe
- * Fetching platform data is being done with s_config subdev call.
- * In probe routine, we just register subdev device
+ * s_config subdev ops
+ * With camera device,
+ * we need to re-initialize every single opening time therefor,
+ * it is not necessary to be initialized on probe time.
+ * except for version checking
+ * NOTE: version checking is optional
  */
-static int s5ka3dfx_probe(struct i2c_client *client,
-			  const struct i2c_device_id *id)
+static int s5ka3dfx_s_config(struct v4l2_subdev *sd,
+			     int irq, void *platform_data)
 {
-	struct s5ka3dfx_state *state;
-	struct v4l2_subdev *sd;
-	struct s5ka3dfx_platform_data *pdata = client->dev.platform_data;
+	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	struct s5ka3dfx_state *state =
+		container_of(sd, struct s5ka3dfx_state, sd);
+	struct s5ka3dfx_platform_data *pdata;
 
-	state = kzalloc(sizeof(struct s5ka3dfx_state), GFP_KERNEL);
-	if (state == NULL)
-		return -ENOMEM;
+	dev_dbg(&client->dev, "fetching platform data\n");
 
-	sd = &state->sd;
-	strcpy(sd->name, S5KA3DFX_DRIVER_NAME);
+	pdata = client->dev.platform_data;
+
+	if (!pdata) {
+		dev_err(&client->dev, "%s: no platform data\n", __func__);
+		return -ENODEV;
+	}
 
 	/*
 	 * Assign default format and resolution
@@ -1179,6 +1170,53 @@ static int s5ka3dfx_probe(struct i2c_client *client,
 	} else
 		state->is_mipi = pdata->is_mipi;
 
+	return 0;
+}
+
+static const struct v4l2_subdev_core_ops s5ka3dfx_core_ops = {
+	.init = s5ka3dfx_init,		/* initializing API */
+	.s_config = s5ka3dfx_s_config,	/* Fetch platform data */
+	.queryctrl = s5ka3dfx_queryctrl,
+	.querymenu = s5ka3dfx_querymenu,
+	.g_ctrl = s5ka3dfx_g_ctrl,
+	.s_ctrl = s5ka3dfx_s_ctrl,
+};
+
+static const struct v4l2_subdev_video_ops s5ka3dfx_video_ops = {
+	.s_crystal_freq = s5ka3dfx_s_crystal_freq,
+	.g_fmt = s5ka3dfx_g_fmt,
+	.s_fmt = s5ka3dfx_s_fmt,
+	.enum_framesizes = s5ka3dfx_enum_framesizes,
+	.enum_frameintervals = s5ka3dfx_enum_frameintervals,
+	.enum_fmt = s5ka3dfx_enum_fmt,
+	.try_fmt = s5ka3dfx_try_fmt,
+	.g_parm = s5ka3dfx_g_parm,
+	.s_parm = s5ka3dfx_s_parm,
+};
+
+static const struct v4l2_subdev_ops s5ka3dfx_ops = {
+	.core = &s5ka3dfx_core_ops,
+	.video = &s5ka3dfx_video_ops,
+};
+
+/*
+ * s5ka3dfx_probe
+ * Fetching platform data is being done with s_config subdev call.
+ * In probe routine, we just register subdev device
+ */
+static int s5ka3dfx_probe(struct i2c_client *client,
+			  const struct i2c_device_id *id)
+{
+	struct s5ka3dfx_state *state;
+	struct v4l2_subdev *sd;
+
+	state = kzalloc(sizeof(struct s5ka3dfx_state), GFP_KERNEL);
+	if (state == NULL)
+		return -ENOMEM;
+
+	sd = &state->sd;
+	strcpy(sd->name, S5KA3DFX_DRIVER_NAME);
+
 	/* Registering subdev */
 	v4l2_i2c_subdev_init(sd, client, &s5ka3dfx_ops);
 
@@ -1204,25 +1242,12 @@ static const struct i2c_device_id s5ka3dfx_id[] = {
 
 MODULE_DEVICE_TABLE(i2c, s5ka3dfx_id);
 
-static struct i2c_driver v4l2_i2c_driver = {
-	.driver.name = S5KA3DFX_DRIVER_NAME,
+static struct v4l2_i2c_driver_data v4l2_i2c_data = {
+	.name = S5KA3DFX_DRIVER_NAME,
 	.probe = s5ka3dfx_probe,
 	.remove = s5ka3dfx_remove,
 	.id_table = s5ka3dfx_id,
 };
-
-static int __init v4l2_i2c_drv_init(void)
-{
-	return i2c_add_driver(&v4l2_i2c_driver);
-}
-
-static void __exit v4l2_i2c_drv_cleanup(void)
-{
-	i2c_del_driver(&v4l2_i2c_driver);
-}
-
-module_init(v4l2_i2c_drv_init);
-module_exit(v4l2_i2c_drv_cleanup);
 
 MODULE_DESCRIPTION("Samsung Electronics S5KA3DFX UXGA camera driver");
 MODULE_AUTHOR("Jinsung Yang <jsgood.yang@samsung.com>");
